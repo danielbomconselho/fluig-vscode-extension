@@ -3,6 +3,7 @@ import { UtilsService } from "../services/UtilsService";
 import { readFileSync } from "fs";
 import { TemplateService } from "../services/TemplateService";
 import { AttributionMechanismService } from '../services/AttributionMechanismService';
+import { WorkflowService } from '../services/WorkflowService';
 
 export class WorkflowExtension {
 
@@ -27,6 +28,25 @@ export class WorkflowExtension {
             "fluiggers-fluig-vscode-extension.exportMechanism",
             WorkflowExtension.exportMechanism
         ));
+        context.subscriptions.push(vscode.commands.registerCommand(
+            "fluiggers-fluig-vscode-extension.updateEvent",
+            WorkflowExtension.updateWorkflowEvent
+        ));
+    }
+
+    /**
+     * Atualiza um Evento de Processo
+     */
+    private static async updateWorkflowEvent(fileUri: vscode.Uri) {
+        // Ativado pela Tecla de Atalho
+        if (!fileUri) {
+            if (!vscode.window.activeTextEditor) {
+                vscode.window.showErrorMessage("Não há editor de texto ativo com script de evento");
+                return;
+            }
+            fileUri = vscode.window.activeTextEditor.document.uri;
+        }
+        WorkflowService.update(fileUri);
     }
 
     /**

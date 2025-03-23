@@ -9,6 +9,11 @@ export class WidgetExtension {
         ));
 
         context.subscriptions.push(commands.registerCommand(
+            "fluiggers-fluig-vscode-extension.importWidget",
+            WidgetService.import
+        ));
+
+        context.subscriptions.push(commands.registerCommand(
             "fluiggers-fluig-vscode-extension.exportWidget",
             function (fileUri: Uri) {
                 // Ativado pela Tecla Atalho
