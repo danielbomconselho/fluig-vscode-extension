@@ -1,0 +1,16 @@
+application.type=widget
+application.code=UWE
+application.title=UWE
+application.description=UWE
+application.fluig.version=1.0.0.0
+application.category=SYSTEM
+application.renderer=freemarker
+developer.code=SPO-23714
+developer.name=daniel.sales
+developer.url=http://www.fluiggers.com.br
+application.uiwidget=false
+application.mobileapp=false
+application.version=${build.version}-${build.revision}
+view.file=view.ftl
+edit.file=edit.ftl
+locale.file.base.name=UWE
