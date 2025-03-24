@@ -16,6 +16,12 @@ headers.append("accept-encoding","gzip, deflate, br, zstd");
 
 
 export class WorkflowService {
+    /**
+     * 
+     * @param fileUri 
+     * @returns 
+     * Criado em 10/03/2025 por Daniel Bom conselho Sales
+     */
     public static async update(fileUri: Uri) {
         //console.log("update 1");        
         const server = await ServerService.getSelect();
@@ -76,7 +82,7 @@ export class WorkflowService {
         const url = UtilsService.getRestUrl(server, basePath, "UWE2"); // corrected base path
         console.log("checkUWE URL:", url.toString()); // Log the URL
         return await fetch(
-            url, // Use the URL as string, no need to create a new object.
+            url, // Use the URL as string.
             {
                 method: "GET",
                 headers: { 

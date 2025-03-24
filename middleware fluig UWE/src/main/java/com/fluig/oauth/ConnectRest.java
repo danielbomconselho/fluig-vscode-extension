@@ -1,8 +1,10 @@
 
 package com.fluig.oauth;
+import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
-
+import java.io.InputStreamReader;
+import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Paths;
@@ -30,9 +32,14 @@ import javax.ws.rs.Produces;
 import javax.ws.rs.core.Context;
 import javax.ws.rs.core.MediaType;
 import javax.ws.rs.core.Response;
+
+import org.apache.commons.httpclient.URI;
+import org.apache.commons.httpclient.util.HttpURLConnection;
 import org.json.*;
 import com.fluig.Logs.Log;
-//import com.fluig.api.client.env.FluigClient;
+import com.github.scribejava.core.httpclient.HttpClient;
+import com.mashape.unirest.http.HttpResponse;
+import com.mashape.unirest.request.HttpRequest;
 
 
 @Path("/conn")
@@ -41,11 +48,12 @@ public class ConnectRest {
 	/* Como chamar via postman
 	 * Use esta URL: https://serverUrl/UWS/rest/conn/updateworkflowevent
 	 * 
-	 */
+    **/
+    
+    public static final String endPoint = "/portal/p/api/servlet/ping"; 
 
     @Context
     private ServletContext context; // Inject the ServletContext
-    
     @POST
     @Path("/updateworkflowevent")
     @Produces(MediaType.APPLICATION_JSON)
@@ -53,7 +61,10 @@ public class ConnectRest {
     public Response updateworkflowscript(String requestBody) throws IOException, SQLException, NamingException{
 		final Log log = new Log();
 		log.info("webhook: " + requestBody);
-        
+        String cookie = requestBody;
+        if(checkLoginPassword(cookie, null)==0){
+            return Response.status(Response.Status.UNAUTHORIZED).entity("Unauthorized").build();
+        }
         Connection conn = null;
 		Statement stmt = null;
 		ResultSet rs = null;
@@ -125,9 +136,14 @@ public class ConnectRest {
     @Path("/getworkflowsversion")
     @Produces(MediaType.APPLICATION_JSON)
     @Consumes(MediaType.APPLICATION_JSON)
-    public Response getworkflowversion(@QueryParam("CODDEFPROCESS") String CODDEFPROCESS) throws IOException, SQLException, NamingException{
+    public Response getworkflowversion(@QueryParam("CODDEFPROCESS") String CODDEFPROCESS,String requestBody, @Context HttpServletRequest request) throws IOException, SQLException, NamingException{
 		final Log log = new Log();
 		log.info("webhook: " + CODDEFPROCESS);
+        String cookie = request.getHeader("Cookie");
+        if(checkLoginPassword(cookie, request)==0){
+            return Response.status(Response.Status.UNAUTHORIZED).entity("Unauthorized").build();
+        }
+
         Connection conn = null;
 		Statement stmt = null;
 		ResultSet rs = null;
@@ -183,9 +199,13 @@ public class ConnectRest {
     @Path("/warlistfile")
     @Produces(MediaType.APPLICATION_JSON)
     @Consumes(MediaType.APPLICATION_JSON)
-    public Response warlistfile() throws IOException, NamingException{
+    public Response warlistfile(String requestBody, @Context HttpServletRequest request) throws IOException, NamingException, SQLException{
 		final Log log = new Log();
 		log.info("webhook: ");
+        String cookie = request.getHeader("Cookie");
+        if(checkLoginPassword(cookie, request)==0){
+            return Response.status(Response.Status.UNAUTHORIZED).entity("Unauthorized").build();
+        }
 
         try{
             // pegue o caminho real do web application's root directory
@@ -235,9 +255,14 @@ public class ConnectRest {
     @Path("/getwarfile")
     @Produces(MediaType.APPLICATION_JSON)
     @Consumes(MediaType.APPLICATION_JSON)
-    public Response getwarfile(@QueryParam("war") String war) throws IOException, NamingException{
+    public Response getwarfile(@QueryParam("war") String war,String requestBody, @Context HttpServletRequest request) throws IOException, NamingException, SQLException{
 		final Log log = new Log();
 		log.info("webhook: ");
+        String cookie = request.getHeader("Cookie");
+        
+        if(checkLoginPassword(cookie, request)==0){
+            return Response.status(Response.Status.UNAUTHORIZED).entity("Unauthorized").build();
+        }
 
         try{
             // pegue o caminho real do web application's root directory
@@ -295,6 +320,41 @@ public class ConnectRest {
 		}finally {
 
         }
+    }
+
+    public int checkLoginPassword(String cookie,HttpServletRequest request) throws SQLException, NamingException{
+		final Log log = new Log();
+
+        int verdade = 0;
+        try {
+            // Check if the cookie is valid.
+            if (cookie == null || cookie.trim().isEmpty()) {
+                log.error("Cookie is null or empty.");
+                return 0;
+            }
+            // Build the URL for the ping endpoint
+            String baseUrl = request.getRequestURL().toString();
+            baseUrl = baseUrl.substring(0, baseUrl.indexOf("/UWS/rest/conn"));
+            String pingUrl = baseUrl + endPoint;
+            
+            // Criando o cliente HTTP
+            HttpURLConnection conn = (HttpURLConnection) new URL(pingUrl).openConnection();
+            conn.setRequestMethod("GET");
+            conn.setRequestProperty("Accept", "application/json");
+            conn.setRequestProperty("Cookie", cookie);
+            conn.connect();
+            int responseCode = conn.getResponseCode();
+            if (responseCode == 200) {
+                verdade = 1;
+            } else {
+                verdade = 0;
+            }
+            conn.disconnect();
+
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        return verdade;
     }
 
 }

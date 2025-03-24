@@ -192,6 +192,8 @@ export class WidgetService {
 
     /**
      * Import Widget
+     * Criado por Daniel Bom conselho Sales em 20/03/2025
+     * Este recurso nessecita da widget UWE 
      */
     public static async import() {
         const server = await ServerService.getSelect();
@@ -241,6 +243,11 @@ export class WidgetService {
 
     }
 
+    /**
+     * Import Widget
+     * Criado por Daniel Bom conselho Sales em 20/03/2025
+     * Esta função carrega a widget UWE no fluig para adicionar os novos recursos.
+     */
     public static async exportWarFile(fileUri: Uri, server: any) {
         const fileContent = await workspace.fs.readFile(fileUri);
         const fileBlob = new Blob([fileContent]);
@@ -263,7 +270,7 @@ export class WidgetService {
                 }
             ).then(r => {
                 if (!r.ok) {
-                    throw new Error(`${r.status} - ${r.statusText}. Para Fluig anterior ao 1.8.2 utilize a versão antiga da Extensão.`);
+                    throw new Error(`${r.status} - ${r.statusText}. Para Fluig anterior ao 1.8.2 não há suporte.`);
                 }
 
                 return r.json();
@@ -280,6 +287,15 @@ export class WidgetService {
         }
 
     }
+    /**
+     * 
+     * @param server 
+     * @returns 
+     * Criado por Daniel Bom conselho Sales em 20/03/2025
+     * Função para baixar o war do servidor do fluig.
+     * Localisa todos os pacotes war contidos na pasta fluig/appserver/apps
+     *  
+     */
     
     public static async getWarFileSelected(server: ServerDTO) {
         const widgetUri = UtilsService.getRestUrl(server, basePathUWE,"warlistfile");
@@ -323,6 +339,14 @@ export class WidgetService {
         return result.label;
     }
 
+    /**
+     * 
+     * @param base64String 
+     * @param fileName 
+     * Criado por Daniel Bom conselho Sales em 20/03/2025
+     * Salva o conteudo base64 recebido da UWE em um arquivo no disco.
+     */
+
     public static async saveBase64ToFile(base64String: string, fileName: string) {
         try {
             //let fs: File;
@@ -342,6 +366,15 @@ export class WidgetService {
             window.showErrorMessage(`Erro ao salvar o arquivo: ${error}`);
         }
     }
+
+    /**
+     * 
+     * @param fileName 
+     * Criado por Daniel Bom conselho Sales em 20/03/2025
+     * Descompacta war na pasta de widgets do projeto o arquivo WAR fica na raiz da pasta Widget e é criada um pasta scom o conteudo da widget.
+     * O psdrão nesta pasta não segue o mesmo padrão de quando se cria uma widget nova. Caso tenha desenvovimento java esté não tem o seu fonte extraido.
+     * Para voltar as classes java ao fonte original favor usar um descompilador java. 
+     */
 
     public static async extractWarFile(fileName: string) {
         console.log("extractWarFile chamou.");
