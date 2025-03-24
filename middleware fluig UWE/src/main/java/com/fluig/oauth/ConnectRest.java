@@ -1,27 +1,17 @@
 
 package com.fluig.oauth;
-import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
-import java.io.InputStreamReader;
+import java.net.HttpURLConnection;
 import java.net.URL;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Paths;
-import java.security.NoSuchAlgorithmException;
 import java.sql.*;
 import java.util.Base64;
-import java.nio.charset.StandardCharsets;
-import java.security.InvalidKeyException;
-import java.security.NoSuchAlgorithmException;
-import javax.crypto.Mac;
-import javax.crypto.spec.SecretKeySpec;
 import javax.naming.InitialContext;
 import javax.naming.NamingException;
 import javax.servlet.ServletContext;
 import javax.servlet.http.HttpServletRequest;
-import javax.servlet.http.HttpServletResponse;
-
 import javax.sql.DataSource;
 import javax.ws.rs.Consumes;
 import javax.ws.rs.GET;
@@ -32,15 +22,8 @@ import javax.ws.rs.Produces;
 import javax.ws.rs.core.Context;
 import javax.ws.rs.core.MediaType;
 import javax.ws.rs.core.Response;
-
-import org.apache.commons.httpclient.URI;
-import org.apache.commons.httpclient.util.HttpURLConnection;
 import org.json.*;
 import com.fluig.Logs.Log;
-import com.github.scribejava.core.httpclient.HttpClient;
-import com.mashape.unirest.http.HttpResponse;
-import com.mashape.unirest.request.HttpRequest;
-
 
 @Path("/conn")
 public class ConnectRest {
@@ -58,10 +41,10 @@ public class ConnectRest {
     @Path("/updateworkflowevent")
     @Produces(MediaType.APPLICATION_JSON)
     @Consumes(MediaType.APPLICATION_JSON)
-    public Response updateworkflowscript(String requestBody) throws IOException, SQLException, NamingException{
+    public Response updateworkflowscript(String requestBody, @Context HttpServletRequest request) throws IOException, SQLException, NamingException{
 		final Log log = new Log();
 		log.info("webhook: " + requestBody);
-        String cookie = requestBody;
+        String cookie = request.getHeader("Cookie");
         if(checkLoginPassword(cookie, null)==0){
             return Response.status(Response.Status.UNAUTHORIZED).entity("Unauthorized").build();
         }
@@ -324,7 +307,7 @@ public class ConnectRest {
 
     public int checkLoginPassword(String cookie,HttpServletRequest request) throws SQLException, NamingException{
 		final Log log = new Log();
-
+        log.info("checkLoginPassword: chamada");
         int verdade = 0;
         try {
             // Check if the cookie is valid.
@@ -332,9 +315,22 @@ public class ConnectRest {
                 log.error("Cookie is null or empty.");
                 return 0;
             }
-            // Build the URL for the ping endpoint
-            String baseUrl = request.getRequestURL().toString();
-            baseUrl = baseUrl.substring(0, baseUrl.indexOf("/UWS/rest/conn"));
+            // Obtém o esquema (http/https)
+            String scheme = request.getScheme();
+            // Obtém o nome do host
+            String serverName = request.getServerName();
+            // Obtém a porta do servidor
+            int serverPort = request.getServerPort();
+
+            // Monta o URL base
+            String baseUrl = scheme + "://" + serverName;
+
+            // Adiciona a porta, caso não seja a padrão (80 para HTTP e 443 para HTTPS)
+            if ((scheme.equals("http") && serverPort != 80) || (scheme.equals("https") && serverPort != 443)) {
+                baseUrl += ":" + serverPort;
+            }
+
+            log.info("baseUrl: " + baseUrl);
             String pingUrl = baseUrl + endPoint;
             
             // Criando o cliente HTTP
