@@ -80,7 +80,7 @@ export class UtilsService {
      */
     public static async checkUWE(server: ServerDTO):Promise<any> {
         const basePath = "/page-management/api/v2/applications/";    
-        const url = UtilsService.getRestUrl(server, basePath, "UWE2"); // corrected base path
+        const url = UtilsService.getRestUrl(server, basePath, "UWE"); // corrected base path
             console.log("checkUWE URL:", url.toString()); // Log the URL
             return await fetch(
                 url, // Use the URL as string.
@@ -97,7 +97,6 @@ export class UtilsService {
                     if(r.status===404){
                         throw new Error("404 - Widget não encontrada.");
                     }
-                    console.log(text);
                     const json = JSON.parse(text); // Try parsing as JSON
                     return json;
                 } catch (e) {

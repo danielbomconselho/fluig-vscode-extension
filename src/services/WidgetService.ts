@@ -299,7 +299,7 @@ export class WidgetService {
     public static async getWarFileSelected(server: ServerDTO) {
         //Verifica se widget UWE está carregada no servidor
         let resposta = await UtilsService.checkUWE(server);
-        resposta = JSON.parse(resposta);
+        //resposta = JSON.parse(resposta);
         if(resposta.code === "com.fluig.wcm.core.exception.ApplicationNotFoundException"){
             // Add confirmation modal here
             const confirmExport = await window.showQuickPick(["Sim", "Não"], {
