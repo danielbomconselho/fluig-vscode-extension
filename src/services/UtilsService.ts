@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { ServerDTO } from '../models/ServerDTO';
+import { LoginService } from './LoginService';
 
 export class UtilsService {
     public static generateRandomID() {
@@ -69,4 +70,44 @@ export class UtilsService {
 
         return isPasswordCorrect;
     }
+
+    /**
+     * 
+     * @param server 
+     * @returns 
+     * Criado por Daniel Bom Conselho Sales 10/03/2025
+     * Consulta o servidor do fluig e verifica se a widget UWE esta carregada no servidor.
+     */
+    public static async checkUWE(server: ServerDTO):Promise<any> {
+        const basePath = "/page-management/api/v2/applications/";    
+        const url = UtilsService.getRestUrl(server, basePath, "UWE2"); // corrected base path
+            console.log("checkUWE URL:", url.toString()); // Log the URL
+            return await fetch(
+                url, // Use the URL as string.
+                {
+                    method: "GET",
+                    headers: { 
+                        "accept": "application/json", "content-type": "application/json",
+                        'cookie': await LoginService.loginAndGetCookies(server)
+                    } 
+                } // Add headers
+            ).then(async (r) => {
+                const text = await r.text(); // Get the response as text
+                try {
+                    if(r.status===404){
+                        throw new Error("404 - Widget não encontrada.");
+                    }
+                    console.log(text);
+                    const json = JSON.parse(text); // Try parsing as JSON
+                    return json;
+                } catch (e) {
+                    console.error("checkUWE JSON Parse Error:", e); // Log any parsing error
+                    return text; // Return the text if parsing fails
+                }
+            })
+            .catch((error) => {
+                console.error("checkUWE Fetch Error:", error); // Log any fetch errors
+                throw error;
+            });
+        }
 }

@@ -23,7 +23,7 @@ export class WorkflowService {
      * Criado em 10/03/2025 por Daniel Bom conselho Sales
      */
     public static async update(fileUri: Uri) {
-        //console.log("update 1");        
+      
         const server = await ServerService.getSelect();
         if(!server){
             window.showErrorMessage("No server selected.");
@@ -33,9 +33,20 @@ export class WorkflowService {
             return;
         }
         try {
-            let resposta = await this.checkUWE(server);
+            //Verifica se widget UWE está carregada no servidor
+            let resposta = await UtilsService.checkUWE(server);
             resposta = JSON.parse(resposta);
             if(resposta.code === "com.fluig.wcm.core.exception.ApplicationNotFoundException"){
+                // Add confirmation modal here
+                const confirmExport = await window.showQuickPick(["Sim", "Não"], {
+                    placeHolder: "Para usar este recurso é necessário que você exporte o artefato UWE-1.0.war. Deseja continuar?",
+                    canPickMany: false
+                });
+
+                if (confirmExport !== "Sim") {
+                    window.showInformationMessage("Exportação cancelada.");
+                    return;
+                }
                 console.log("aqui");
                 let uweFile =Uri.joinPath(
                     TemplateService.templatesUri,
@@ -76,37 +87,5 @@ export class WorkflowService {
             console.error("Error reading or encoding file:", error);
             throw error; // Re-throw the error to be handled by the caller
         }
-    }
-
-    public static async checkUWE(server: ServerDTO):Promise<any> {
-        const url = UtilsService.getRestUrl(server, basePath, "UWE2"); // corrected base path
-        console.log("checkUWE URL:", url.toString()); // Log the URL
-        return await fetch(
-            url, // Use the URL as string.
-            {
-                method: "GET",
-                headers: { 
-                    "accept": "application/json", "content-type": "application/json",
-                    'cookie': await LoginService.loginAndGetCookies(server)
-                } 
-            } // Add headers
-        ).then(async (r) => {
-            const text = await r.text(); // Get the response as text
-            try {
-                if(r.status===404){
-                    throw new Error("404 - Widget não encontrada.");
-                }
-                console.log(text);
-                const json = JSON.parse(text); // Try parsing as JSON
-                return json;
-            } catch (e) {
-                console.error("checkUWE JSON Parse Error:", e); // Log any parsing error
-                return text; // Return the text if parsing fails
-            }
-        })
-        .catch((error) => {
-            console.error("checkUWE Fetch Error:", error); // Log any fetch errors
-            throw error;
-        });
     }
 }

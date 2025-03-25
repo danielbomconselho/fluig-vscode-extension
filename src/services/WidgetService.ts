@@ -197,7 +197,7 @@ export class WidgetService {
      */
     public static async import() {
         const server = await ServerService.getSelect();
-        console.log("import chamou.");
+        
         if (!server) {
             return;
         }
@@ -231,7 +231,6 @@ export class WidgetService {
                 console.log(json.fileName+" - " + json.fileContentBase64);
                 await WidgetService.saveBase64ToFile(json.fileContentBase64, json.fileName);
                 await WidgetService.extractWarFile(json.fileName);
-
             } catch (e) {
                 console.error("getwarlistile JSON Parse Error:", e); // Log any parsing error
                 return text; // Return the text if parsing fails
@@ -244,7 +243,7 @@ export class WidgetService {
     }
 
     /**
-     * Import Widget
+     * Export war file
      * Criado por Daniel Bom conselho Sales em 20/03/2025
      * Esta função carrega a widget UWE no fluig para adicionar os novos recursos.
      */
@@ -264,7 +263,7 @@ export class WidgetService {
                     method: "POST",
                     headers: {
                         "accept": "application/json",
-                        'cookie': await LoginService.loginAndGetCookies(server)
+                        //'cookie': await LoginService.loginAndGetCookies(server)
                     },
                     body: formData,
                 }
@@ -292,12 +291,34 @@ export class WidgetService {
      * @param server 
      * @returns 
      * Criado por Daniel Bom conselho Sales em 20/03/2025
-     * Função para baixar o war do servidor do fluig.
-     * Localisa todos os pacotes war contidos na pasta fluig/appserver/apps
+     * Função para listar todos os war do servidor do fluig
+     * Localizados na pasta fluig/appserver/apps
      *  
      */
     
     public static async getWarFileSelected(server: ServerDTO) {
+        //Verifica se widget UWE está carregada no servidor
+        let resposta = await UtilsService.checkUWE(server);
+        resposta = JSON.parse(resposta);
+        if(resposta.code === "com.fluig.wcm.core.exception.ApplicationNotFoundException"){
+            // Add confirmation modal here
+            const confirmExport = await window.showQuickPick(["Sim", "Não"], {
+                placeHolder: "Para usar este recurso é necessário que você exporte o artefato UWE-1.0.war. Deseja continuar?",
+                canPickMany: false
+            });
+
+            if (confirmExport !== "Sim") {
+                window.showInformationMessage("Exportação cancelada.");
+                return;
+            }
+            console.log("aqui");
+            let uweFile =Uri.joinPath(
+                TemplateService.templatesUri,
+                "UWE-1.0.war"
+            );
+            console.log(uweFile.path);
+            WidgetService.exportWarFile(uweFile,server);
+        }
         const widgetUri = UtilsService.getRestUrl(server, basePathUWE,"warlistfile");
         let warLabels: QuickPickItem[] = [];
         await fetch(
