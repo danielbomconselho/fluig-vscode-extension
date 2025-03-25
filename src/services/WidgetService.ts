@@ -165,7 +165,7 @@ export class WidgetService {
                         method: "POST",
                         headers: {
                             "Accept": "application/json",
-                            'Cookie': await LoginService.loginAndGetCookies(server)
+                            //'Cookie': await LoginService.loginAndGetCookies(server)
                         },
                         body: formData,
                     }
