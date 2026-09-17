@@ -2,6 +2,7 @@
 
 ## 2.12.0
 
+- Permite excluir individualmente os pontos intermediarios de um fluxo pela lixeira exibida no hover e redesenha a rota restante.
 - Remove o JRE portatil do VSIX e torna a descoberta do Java multiplataforma via configuracao global, `JAVA_HOME` ou `PATH`.
 - Gera um unico pacote independente de Windows, Linux ou macOS.
 - Incorpora o editor visual de arquivos `.process` ao mesmo VSIX da extensao Fluig.

@@ -501,10 +501,22 @@ button:disabled { cursor: default; opacity: .5; }
 .flow.selected { stroke-width: 3; filter: drop-shadow(0 0 2px var(--accent)); }
 .flow-label { fill: #000; font: 11px var(--vscode-font-family); paint-order: stroke; stroke: #fff; stroke-width: 4px; stroke-linejoin: round; text-anchor: middle; pointer-events: none; }
 .flow-edit-overlay { pointer-events: none; }
+.flow-bendpoint-control { pointer-events: auto; }
+.flow-bendpoint-hover-zone { fill: transparent; stroke: none; pointer-events: all; }
 .flow-bendpoint-handle,
 .flow-segment-handle,
 .flow-endpoint-handle { pointer-events: auto; vector-effect: non-scaling-stroke; }
 .flow-bendpoint-handle { cursor: move; fill: var(--vscode-button-background, #0e639c); stroke: #fff; stroke-width: 1.5; }
+.flow-bendpoint-delete { cursor: pointer; opacity: 0; pointer-events: none; transition: opacity 90ms ease-out; }
+.flow-bendpoint-control:hover .flow-bendpoint-delete,
+.flow-bendpoint-delete:focus-visible { opacity: 1; pointer-events: auto; }
+.flow-bendpoint-delete:focus-visible { outline: none; }
+.flow-bendpoint-delete-body { fill: var(--vscode-editor-background, #fff); stroke: var(--vscode-errorForeground, #d13438); stroke-width: 1.4; vector-effect: non-scaling-stroke; }
+.flow-bendpoint-delete-icon { fill: none; stroke: var(--vscode-errorForeground, #d13438); stroke-width: 1.25; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+.flow-bendpoint-delete:hover .flow-bendpoint-delete-body,
+.flow-bendpoint-delete:focus-visible .flow-bendpoint-delete-body { fill: var(--vscode-inputValidation-errorBackground, #5a1d1d); stroke-width: 2; }
+.flow-bendpoint-delete:hover .flow-bendpoint-delete-icon,
+.flow-bendpoint-delete:focus-visible .flow-bendpoint-delete-icon { stroke: var(--vscode-inputValidation-errorForeground, #fff); stroke-width: 1.6; }
 .flow-segment-handle { cursor: move; fill: #fff; stroke: var(--vscode-button-background, #0e639c); stroke-width: 1.5; }
 .flow-endpoint-handle { cursor: crosshair; fill: #fff; stroke: var(--vscode-button-background, #0e639c); stroke-width: 2; }
 .flow-endpoint-handle.source { stroke-dasharray: 2 1; }

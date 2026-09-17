@@ -2221,6 +2221,18 @@
       overlay.append(handle);
     }
     connection.bendpoints.forEach((point, index) => {
+      const control = svg('g', {
+        class: 'flow-bendpoint-control',
+        'data-bendpoint-index': index
+      });
+      control.append(svg('rect', {
+        x: point.x - 8,
+        y: point.y - 25,
+        width: 32,
+        height: 34,
+        rx: 6,
+        class: 'flow-bendpoint-hover-zone'
+      }));
       const handle = svg('circle', {
         cx: point.x,
         cy: point.y,
@@ -2229,7 +2241,32 @@
         'aria-label': 'Mover ponto do fluxo'
       });
       handle.addEventListener('pointerdown', (event) => beginFlowEditInteraction(event, id, 'bendpoint', index));
-      overlay.append(handle);
+      control.append(handle);
+      const deleteX = point.x + 15;
+      const deleteY = point.y - 15;
+      const deleteButton = svg('g', {
+        class: 'flow-bendpoint-delete',
+        role: 'button',
+        tabindex: '0',
+        'aria-label': 'Excluir ponto do fluxo'
+      });
+      deleteButton.append(svg('circle', {
+        cx: deleteX,
+        cy: deleteY,
+        r: 8,
+        class: 'flow-bendpoint-delete-body'
+      }));
+      deleteButton.append(svg('path', {
+        d: `M ${deleteX - 3} ${deleteY - 3} L ${deleteX + 3} ${deleteY - 3} L ${deleteX + 2.5} ${deleteY + 4} L ${deleteX - 2.5} ${deleteY + 4} Z M ${deleteX - 4.5} ${deleteY - 5} L ${deleteX + 4.5} ${deleteY - 5} M ${deleteX - 1.5} ${deleteY - 7} L ${deleteX + 1.5} ${deleteY - 7}`,
+        class: 'flow-bendpoint-delete-icon'
+      }));
+      deleteButton.addEventListener('pointerdown', stopContextAction);
+      deleteButton.addEventListener('click', (event) => deleteFlowBendpoint(event, id, index));
+      deleteButton.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter' || event.key === ' ') deleteFlowBendpoint(event, id, index);
+      });
+      control.append(deleteButton);
+      overlay.append(control);
     });
     for (let index = 0; index < points.length - 1; index += 1) {
       const from = points[index];
@@ -2250,6 +2287,29 @@
       overlay.append(handle);
     }
     viewport.append(overlay);
+  }
+
+  function deleteFlowBendpoint(event, connectionId, index) {
+    event.preventDefault();
+    event.stopPropagation();
+    if (state.layoutCommitPending || state.pointerInteraction || state.flowEditInteraction) return;
+    const connection = state.connectionById.get(connectionId);
+    if (!connection || index < 0 || index >= connection.bendpoints.length) return;
+    connection.bendpoints = connection.bendpoints
+      .filter((_, candidateIndex) => candidateIndex !== index)
+      .map((point) => ({ ...point }));
+    state.layoutCommitPending = true;
+    renderStatus(state.data);
+    redrawDiagram(false);
+    vscode.postMessage({
+      type: 'updateLayout',
+      layout: {
+        moves: [],
+        connections: [{ id: connectionId, bendpoints: connection.bendpoints.map((point) => ({ ...point })) }],
+        canvas: state.data.canvas
+      }
+    });
+    showToast('Gravando a remocao do ponto e redesenhando o fluxo...');
   }
 
   function beginFlowEditInteraction(event, connectionId, kind, index) {

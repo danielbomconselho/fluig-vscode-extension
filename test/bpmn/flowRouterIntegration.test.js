@@ -30,7 +30,18 @@ test('adiciona substitui e remove bendpoints sem alterar a semantica do fluxo', 
   const repeated = patchLayout(added.text, layout);
   assert.equal(repeated.changed, false);
 
-  const removed = patchLayout(added.text, {
+  const partiallyRemoved = patchLayout(added.text, {
+    moves: [],
+    canvas: layout.canvas,
+    connections: [{ id: 'flow47', bendpoints: [layout.connections[0].bendpoints[1]] }]
+  });
+  assert.deepEqual(
+    partiallyRemoved.model.connections.find((item) => item.businessObject === 'flow47').bendpoints,
+    [layout.connections[0].bendpoints[1]]
+  );
+  assert.equal(partiallyRemoved.validation.ok, true);
+
+  const removed = patchLayout(partiallyRemoved.text, {
     moves: [],
     canvas: layout.canvas,
     connections: [{ id: 'flow47', bendpoints: [] }]
@@ -66,6 +77,19 @@ test('fluxo selecionado oferece alcas para mover bendpoints e segmentos manualme
   assert.match(editorScript, /connections: \[\{ id: interaction\.connectionId, bendpoints:/);
   assert.match(styles, /\.flow-bendpoint-handle/);
   assert.match(styles, /\.flow-segment-handle/);
+});
+
+test('ponto azul do fluxo exibe lixeira e persiste a rota redesenhada sem o bendpoint', () => {
+  const styles = fs.readFileSync(path.join(__dirname, '..', '..', 'media', 'bpmn', 'editor.css'), 'utf8');
+  assert.match(editorScript, /class: 'flow-bendpoint-control'/);
+  assert.match(editorScript, /class: 'flow-bendpoint-delete'/);
+  assert.match(editorScript, /aria-label': 'Excluir ponto do fluxo'/);
+  assert.match(editorScript, /function deleteFlowBendpoint/);
+  assert.match(editorScript, /candidateIndex !== index/);
+  assert.match(editorScript, /Gravando a remocao do ponto e redesenhando o fluxo/);
+  assert.match(styles, /\.flow-bendpoint-control:hover \.flow-bendpoint-delete/);
+  assert.match(styles, /\.flow-bendpoint-delete-body/);
+  assert.match(styles, /\.flow-bendpoint-delete-icon/);
 });
 
 test('fluxo selecionado permite reconectar origem e destino por alças próprias', () => {
