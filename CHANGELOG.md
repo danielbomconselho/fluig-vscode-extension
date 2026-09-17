@@ -1,6 +1,35 @@
 # Change Log
 
+## 2.11.5
+
+- Prepara VSIX autocontido com JRE Eclipse Temurin privado, sem alterar `PATH` ou `JAVA_HOME`.
+- Empacota somente os JARs necessarios do Fluig Studio para o conversor ECM30.
+- Usa Java e plugins empacotados automaticamente, preservando configuracoes locais como override.
+- Valida checksum do JRE baixado e registra um manifesto dos binarios incluidos.
+
 Lista de atualizações da Extensão.
+
+## 2.11.4
+
+- Atualiza automaticamente `workflow/.resources/<processo>.ecm30.xml` a cada salvamento do `.process`, como o Fluig Studio.
+- Consolida eventos duplicados de salvamento com debounce e serializa conversoes concorrentes do mesmo processo.
+- Mantem o ultimo ECM30 valido quando o processo ainda nao atende as precondicoes do conversor e registra o diagnostico no canal `Fluig ECM30`.
+- Permite desativar o comportamento por recurso com `fluiggers.generateEcm30OnSave`.
+
+## 2.11.3
+
+- Adiciona o comando `Fluig: Gerar ECM30 do Processo` usando o conversor BPMN2ECM30 do Fluig Studio instalado localmente.
+- Executa a conversao fora da interface do Eclipse, incluindo scripts e literais do projeto.
+- Valida a raiz e as entidades obrigatorias do runtime antes de gravar.
+- Preserva o ECM30 anterior em `workflow/.resources/.backups` quando o conteudo muda.
+
+## 2.11.2
+
+Bloqueia a validação e a exportação quando o `ecm30.xml` ou o SVG estiver ausente ou for mais antigo que o arquivo `.process`, evitando publicar uma representação de runtime obsoleta.
+
+## 2.11.1
+
+Adiciona validacao local e exportacao SOAP de processos Fluig a partir dos artefatos `ecm30.xml` e SVG gerados pelo Studio.
 
 ## 2.11.0
 

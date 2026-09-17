@@ -375,6 +375,39 @@ ser utilizado em qual dos dois ambientes.
 - __fluig-modal__: Criar modal do Fluig;
 - __fluig-widget__: Criar o esqueleto de uma Widget com itens privados;
 
+## Distribuicao autocontida do gerador ECM30
+
+O build de distribuicao prepara um runtime privado para converter `.process` em
+`ecm30.xml`. O Java nao e instalado globalmente e nao altera `PATH` ou
+`JAVA_HOME`.
+
+Por padrao, a extensao usa o Java privado do VSIX. Caso seja necessario usar um
+Java ja instalado, configure `fluiggers.javaPath` nas configuracoes globais da
+extensao. Essa propriedade possui escopo `machine`: nao e lida nem
+sobrescrita pelo `.vscode/settings.json` do workspace. Deixe o campo vazio para
+voltar ao runtime privado.
+
+Antes de gerar o VSIX, disponibilize uma instalacao local do Fluig Studio em
+`%USERPROFILE%\\EclipsePortable\\App\\eclipse\\plugins` ou informe a pasta:
+
+```powershell
+$env:FLUIG_ECLIPSE_PLUGINS = "C:\\EclipsePortable\\App\\eclipse\\plugins"
+npm run prepare:runtime:win32-x64
+npm run prepare:runtime:check -- --platform=win32 --arch=x64
+npm run package:vsix:win32-x64
+```
+
+O comando `vscode:prepublish`, executado pelo empacotador VS Code, chama
+automaticamente `prepare:runtime`. O pacote recebe um JRE Eclipse Temurin 17 e
+somente os JARs observados como necessarios para o conversor ECM30.
+
+O VSIX resultante e especifico para a plataforma e arquitetura do build. Para
+distribuir em mais de uma plataforma, gere um VSIX separado para cada alvo.
+
+Os JARs TOTVS sao proprietarios e sao copiados apenas da instalacao local. A
+equipe responsavel deve confirmar a permissao contratual de redistribuicao antes
+de compartilhar o VSIX fora da organizacao.
+
 ## Contribuindo com o Projeto
 
 Sinta-se à vontade para colaborar criando mais snippets, templates de arquivos e comandos.
