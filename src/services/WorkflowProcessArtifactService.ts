@@ -176,7 +176,6 @@ export class WorkflowProcessArtifactService {
             cacheDirectory: WorkflowProcessArtifactService.context.globalStorageUri.fsPath,
             javaExecutable: resolveJavaExecutable({
                 configuredPath: configuration.get<string>("javaPath", ""),
-                extensionDirectory,
             }),
             serverVersion: configuration.get<string>("fluigRuntimeVersion", "1.8.2"),
         });

@@ -2,6 +2,8 @@
 
 ## 2.12.0
 
+- Remove o JRE portatil do VSIX e torna a descoberta do Java multiplataforma via configuracao global, `JAVA_HOME` ou `PATH`.
+- Gera um unico pacote independente de Windows, Linux ou macOS.
 - Incorpora o editor visual de arquivos `.process` ao mesmo VSIX da extensao Fluig.
 - Migra os 36 modulos do host do editor para TypeScript e os integra ao webpack principal.
 - Mantem a webview em JavaScript e CSS, executada no sandbox do VS Code e empacotada em `media/bpmn`.

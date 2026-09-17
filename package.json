@@ -621,13 +621,13 @@
                     },
                     "fluiggers.eclipsePluginsPath": {
                         "type": "string",
-                        "description": "Pasta plugins de um Fluig Studio local. Opcional quando o VSIX possui o runtime autocontido",
+                        "description": "Pasta plugins de um Fluig Studio local. Opcional quando o VSIX ja inclui os JARs do conversor ECM30",
                         "default": "",
                         "scope": "machine"
                     },
                     "fluiggers.javaPath": {
                         "type": "string",
-                        "description": "Executavel Java alternativo para o gerador ECM30. Vazio usa primeiro o Java privado do VSIX e depois o Java do sistema",
+                        "description": "Executavel Java ou pasta JAVA_HOME para o gerador ECM30. Vazio usa JAVA_HOME e depois o Java disponivel no PATH",
                         "default": "",
                         "scope": "machine"
                     },
@@ -665,10 +665,9 @@
     },
     "scripts": {
         "vscode:prepublish": "npm run prepare:runtime && npm run package",
-        "prepare:runtime": "node scripts/prepare-bundled-runtime.js",
-        "prepare:runtime:check": "node scripts/prepare-bundled-runtime.js --check",
-        "prepare:runtime:win32-x64": "node scripts/prepare-bundled-runtime.js --platform=win32 --arch=x64",
-        "package:vsix:win32-x64": "npm run prepare:runtime:win32-x64 && vsce package --target win32-x64",
+        "prepare:runtime": "node scripts/prepare-fluig-runtime.js",
+        "prepare:runtime:check": "node scripts/prepare-fluig-runtime.js --check",
+        "package:vsix": "vsce package",
         "precompile": "gulp",
         "buildResources": "gulp buildResources",
         "buildLibraries": "gulp buildLibraries",

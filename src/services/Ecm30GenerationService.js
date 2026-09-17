@@ -11,36 +11,56 @@ const REQUIRED_BUNDLES = [
     "com.totvs.tds.ecm_",
 ];
 
-function bundledRuntimeKey(platform = process.platform, arch = process.arch) {
-    return `${platform}-${arch}`;
+function javaExecutableName(platform = process.platform) {
+    return platform === "win32" ? "java.exe" : "java";
 }
 
-function bundledJavaExecutable(extensionDirectory, platform = process.platform, arch = process.arch) {
-    if (!extensionDirectory) {
+function unquotePath(value) {
+    const normalized = String(value || "").trim();
+    if (normalized.length >= 2 && (
+        (normalized.startsWith('"') && normalized.endsWith('"')) ||
+        (normalized.startsWith("'") && normalized.endsWith("'"))
+    )) {
+        return normalized.slice(1, -1).trim();
+    }
+    return normalized;
+}
+
+function javaFromHome(javaHome, platform = process.platform, exists = fs.existsSync) {
+    const home = unquotePath(javaHome);
+    if (!home) {
         return undefined;
     }
-    const executable = platform === "win32" ? "java.exe" : "java";
-    const candidate = path.join(
-        extensionDirectory,
-        "runtime",
-        "java",
-        bundledRuntimeKey(platform, arch),
-        "bin",
-        executable
-    );
-    return fs.existsSync(candidate) ? candidate : undefined;
+    const executable = javaExecutableName(platform);
+    const candidates = [
+        path.join(home, "bin", executable),
+        path.join(home, "Contents", "Home", "bin", executable),
+    ];
+    return candidates.find(candidate => exists(candidate));
+}
+
+function configuredJavaExecutable(configuredPath, platform = process.platform) {
+    const configured = unquotePath(configuredPath);
+    if (!configured || configured.toLowerCase() === "java") {
+        return configured || undefined;
+    }
+    if (!existingDirectory(configured)) {
+        return configured;
+    }
+    return javaFromHome(configured, platform) ||
+        path.join(configured, "bin", javaExecutableName(platform));
 }
 
 function resolveJavaExecutable(options = {}) {
-    const configuredPath = String(options.configuredPath || "").trim();
-    if (configuredPath && configuredPath.toLowerCase() !== "java") {
-        return configuredPath;
+    const platform = options.platform || process.platform;
+    const configured = configuredJavaExecutable(options.configuredPath, platform);
+    if (configured) {
+        return configured;
     }
-    return bundledJavaExecutable(
-        options.extensionDirectory,
-        options.platform,
-        options.arch
-    ) || configuredPath || "java";
+    const javaHome = options.javaHome === undefined
+        ? process.env.JAVA_HOME
+        : options.javaHome;
+    return javaFromHome(javaHome, platform, options.exists || fs.existsSync) || "java";
 }
 
 function existingDirectory(candidate) {
@@ -307,14 +327,15 @@ module.exports = {
     REQUIRED_BUNDLES,
     assertEcm30,
     assertMarshallerPreconditions,
-    bundledJavaExecutable,
-    bundledRuntimeKey,
+    configuredJavaExecutable,
     findBundle,
     findEclipsePluginsDirectory,
     generateEcm30Artifact,
     getJavaMajorVersion,
     hasRequiredBundles,
     javaArguments,
+    javaExecutableName,
+    javaFromHome,
     parseJavaMajorVersion,
     resolveJavaExecutable,
     writeEcm30Artifact,

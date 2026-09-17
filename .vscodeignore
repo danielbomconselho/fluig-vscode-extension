@@ -17,3 +17,4 @@ webpack.config.js
 templates/**
 .github/**
 scripts/**
+runtime/java/**

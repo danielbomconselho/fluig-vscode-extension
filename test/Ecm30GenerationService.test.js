@@ -8,10 +8,11 @@ const {
     REQUIRED_BUNDLES,
     assertEcm30,
     assertMarshallerPreconditions,
-    bundledJavaExecutable,
+    configuredJavaExecutable,
     findEclipsePluginsDirectory,
     generateEcm30Artifact,
     javaArguments,
+    javaFromHome,
     parseJavaMajorVersion,
     resolveJavaExecutable,
     writeEcm30Artifact,
@@ -50,42 +51,64 @@ test("usa plugins empacotados antes do EclipsePortable", t => {
     assert.equal(findEclipsePluginsDirectory({ bundledPath: bundled, homeDirectory: root }), bundled);
 });
 
-test("resolve Java configurado, empacotado e fallback do sistema", t => {
+test("resolve Java configurado, JAVA_HOME e fallback do PATH", t => {
     const root = temporaryDirectory(t);
-    const bundled = path.join(root, "runtime", "java", "win32-x64", "bin", "java.exe");
-    fs.mkdirSync(path.dirname(bundled), { recursive: true });
-    fs.writeFileSync(bundled, "java");
+    const windowsHome = path.join(root, "jdk-windows");
+    const windowsJava = path.join(windowsHome, "bin", "java.exe");
+    fs.mkdirSync(path.dirname(windowsJava), { recursive: true });
+    fs.writeFileSync(windowsJava, "java");
 
     assert.equal(
-        bundledJavaExecutable(root, "win32", "x64"),
-        bundled
+        javaFromHome(windowsHome, "win32"),
+        windowsJava
     );
     assert.equal(
         resolveJavaExecutable({
-            configuredPath: "java",
-            extensionDirectory: root,
+            javaHome: windowsHome,
             platform: "win32",
-            arch: "x64",
         }),
-        bundled
+        windowsJava
     );
     assert.equal(
         resolveJavaExecutable({
             configuredPath: "C:\\Java\\bin\\java.exe",
-            extensionDirectory: root,
+            javaHome: windowsHome,
             platform: "win32",
-            arch: "x64",
         }),
         "C:\\Java\\bin\\java.exe"
     );
     assert.equal(
         resolveJavaExecutable({
-            extensionDirectory: path.join(root, "missing"),
+            javaHome: path.join(root, "missing"),
             platform: "win32",
-            arch: "x64",
         }),
         "java"
     );
+});
+
+test("aceita uma pasta JAVA_HOME na configuracao explicita", t => {
+    const root = temporaryDirectory(t);
+    const javaHome = path.join(root, "jdk");
+    const java = path.join(javaHome, "bin", process.platform === "win32" ? "java.exe" : "java");
+    fs.mkdirSync(path.dirname(java), { recursive: true });
+    fs.writeFileSync(java, "java");
+
+    assert.equal(configuredJavaExecutable(`"${javaHome}"`, process.platform), java);
+    assert.equal(resolveJavaExecutable({
+        configuredPath: javaHome,
+        javaHome: path.join(root, "outro-jdk"),
+        platform: process.platform,
+    }), java);
+});
+
+test("reconhece o bundle .jdk do macOS ao receber sua pasta externa", t => {
+    const root = temporaryDirectory(t);
+    const javaHome = path.join(root, "Temurin.jdk");
+    const java = path.join(javaHome, "Contents", "Home", "bin", "java");
+    fs.mkdirSync(path.dirname(java), { recursive: true });
+    fs.writeFileSync(java, "java");
+
+    assert.equal(javaFromHome(javaHome, "darwin"), java);
 });
 
 test("interpreta versoes Java antigas e modernas", () => {
