@@ -1,5 +1,13 @@
 # Change Log
 
+## 2.12.0
+
+- Incorpora o editor visual de arquivos `.process` ao mesmo VSIX da extensao Fluig.
+- Migra os 36 modulos do host do editor para TypeScript e os integra ao webpack principal.
+- Mantem a webview em JavaScript e CSS, executada no sandbox do VS Code e empacotada em `media/bpmn`.
+- Unifica comandos, editor customizado e configuracoes de backup no namespace da extensao.
+- Preserva a cobertura funcional do editor com 302 testes automatizados dentro do repositorio principal.
+
 ## 2.11.5
 
 - Prepara VSIX autocontido com JRE Eclipse Temurin privado, sem alterar `PATH` ou `JAVA_HOME`.

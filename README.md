@@ -54,6 +54,7 @@ para que a Extensão baixe os arquivos para o seu workspace / diretório.
 
 Após abrir a pasta do projeto Fluig as seguintes funcionalidades serão disponibilizadas:
 
+- [Editor visual de processos BPMN](#editor-visual-de-processos-bpmn)
 - [Gerenciar Servidores](#gerenciar-servidores)
 - [Consultar Dataset](#consultar-dataset)
 - [Novo Dataset](#novo-dataset)
@@ -78,6 +79,14 @@ Após abrir a pasta do projeto Fluig as seguintes funcionalidades serão disponi
 - [Importar Widget](#importar-widget)
 - [Snippets para HTML](#snippets-para-html)
 - [Snippets para JavaScript](#snippets-para-javascript)
+
+## Editor visual de processos BPMN
+
+Arquivos `.process` abrem diretamente no editor visual Fluig BPMN, agora incorporado a esta extensão. O editor permite visualizar, criar, conectar, mover e configurar elementos do processo preservando o formato usado pelo Fluig Studio.
+
+Os comandos `Fluig BPMN: Validar processo`, `Fluig BPMN: Gerar arquivos de tradução` e `Fluig BPMN: Abrir processo como texto` ficam disponíveis na Paleta de Comandos. O diretório de backup pode ser alterado pela configuração `fluiggers.bpmnBackupDirectory`.
+
+O host do editor faz parte do build TypeScript da extensão. Os arquivos de interface em `media/bpmn` continuam em JavaScript e CSS porque são executados na webview isolada do VS Code. A antiga extensão BPMN separada não deve permanecer instalada junto com este pacote, pois ambas registram o mesmo editor customizado.
 
 ## Gerenciar Servidores
 

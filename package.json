@@ -2,10 +2,14 @@
     "name": "fluiggers-fluig-vscode-extension",
     "displayName": "Fluig - Extensão para Desenvolvimento",
     "description": "Extensão para agilizar o desenvolvimento para o TOTVS Fluig no VS Code",
-    "version": "2.11.5",
+    "version": "2.12.0",
     "publisher": "Fluiggers",
     "activationEvents": [
-        "workspaceContains:**/*.process"
+        "workspaceContains:**/*.process",
+        "onCustomEditor:fluigBpmn.processEditor",
+        "onCommand:fluigBpmn.openText",
+        "onCommand:fluigBpmn.validate",
+        "onCommand:fluigBpmn.generateTranslations"
     ],
     "icon": "images/icon.png",
     "repository": {
@@ -41,6 +45,18 @@
     ],
     "main": "./dist/extension.js",
     "contributes": {
+        "customEditors": [
+            {
+                "viewType": "fluigBpmn.processEditor",
+                "displayName": "Fluig BPMN",
+                "selector": [
+                    {
+                        "filenamePattern": "*.process"
+                    }
+                ],
+                "priority": "default"
+            }
+        ],
         "commands": [
             {
                 "command": "fluiggers-fluig-vscode-extension.installDeclarationLibrary",
@@ -245,6 +261,21 @@
                     "light": "dist/images/light/preview.svg",
                     "dark": "dist/images/dark/preview.svg"
                 }
+            },
+            {
+                "command": "fluigBpmn.openText",
+                "title": "Abrir processo como texto",
+                "category": "Fluig BPMN"
+            },
+            {
+                "command": "fluigBpmn.validate",
+                "title": "Validar processo",
+                "category": "Fluig BPMN"
+            },
+            {
+                "command": "fluigBpmn.generateTranslations",
+                "title": "Gerar arquivos de tradução",
+                "category": "Fluig BPMN"
             }
         ],
         "menus": {
@@ -611,6 +642,22 @@
                         "description": "Gera e atualiza automaticamente o ECM30 sempre que um arquivo .process e salvo",
                         "default": true,
                         "scope": "resource"
+                    },
+                    "fluiggers.bpmnBackupDirectory": {
+                        "type": "string",
+                        "description": "Diretorio relativo a raiz do workspace usado para backups antes de editar arquivos .process",
+                        "default": ".fluig-bpmn/backups",
+                        "scope": "resource"
+                    },
+                    "fluiggers.bpmnEditorPriority": {
+                        "type": "string",
+                        "enum": [
+                            "visual",
+                            "text"
+                        ],
+                        "description": "Preferencia informativa do editor BPMN; use Reopen Editor With para alternar",
+                        "default": "visual",
+                        "scope": "resource"
                     }
                 }
             }
@@ -634,7 +681,8 @@
         "lint": "eslint src --ext ts",
         "test": "node ./out/test/runTest.js",
         "test:process-export": "node --test test/FluigProcessExportService.test.js",
-        "test:ecm30-generation": "node --test test/Ecm30GenerationService.test.js"
+        "test:ecm30-generation": "node --test test/Ecm30GenerationService.test.js",
+        "test:bpmn": "node --import tsx --require ./test/bpmn/stableProcessFixture.js --test test/bpmn/*.test.js"
     },
     "devDependencies": {
         "@popperjs/core": "^2.11.8",
@@ -672,6 +720,7 @@
         "soap": "^1.8.0",
         "template-literal": "^1.0.4",
         "ts-loader": "^9.5.1",
+        "tsx": "^4.20.6",
         "typescript": "^5.4.5",
         "utf-8-validate": "^6.0.6",
         "webpack": "^5.91.0",
