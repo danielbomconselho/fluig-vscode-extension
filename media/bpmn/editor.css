@@ -49,6 +49,10 @@ button:disabled { cursor: default; opacity: .5; }
 .brand-mark { display: grid; place-items: center; width: 26px; height: 26px; border-radius: 6px; color: white; background: linear-gradient(135deg, #ef7d00, #d95100); font-weight: 800; }
 .search span { color: var(--muted); font-size: 11px; }
 .search input { width: min(24vw, 240px); padding: 5px 8px; }
+.toolbar-icon-button { display: grid; place-items: center; width: 30px; height: 30px; padding: 3px; }
+.toolbar-icon-button svg { width: 22px; height: 18px; overflow: visible; }
+.toolbar-icon-button rect { fill: color-mix(in srgb, var(--vscode-button-background, #0e639c) 28%, var(--surface)); stroke: currentColor; stroke-width: 1; }
+.toolbar-icon-button .alignment-guide { fill: none; stroke: var(--vscode-testing-iconPassed, #41a55b); stroke-width: 1.5; stroke-dasharray: 2 1; }
 .zoom-level { min-width: 52px; font-variant-numeric: tabular-nums; }
 .canvas-color-picker { display: inline-flex; align-items: center; gap: 6px; min-height: 30px; padding: 3px 7px; border: 1px solid var(--vscode-input-border, var(--panel-border)); border-radius: 4px; background: var(--vscode-input-background); color: var(--vscode-input-foreground); cursor: pointer; }
 .canvas-color-picker:hover { background: var(--vscode-toolbar-hoverBackground); }

@@ -3,7 +3,7 @@
 
   const vscode = acquireVsCodeApi();
   const {
-    bestContextPadPosition, canvasViewBox, constrainedAttachedDelta, constrainedInsideDelta, edgeScrollVelocity, expandedCanvas, fittedCanvas, fullyContained,
+    alignedCenterPositions, bestContextPadPosition, canvasViewBox, constrainedAttachedDelta, constrainedInsideDelta, edgeScrollVelocity, expandedCanvas, fittedCanvas, fullyContained,
     normalizedRectangle, snappedPointDelta, snappedResizeSize, zoomedScrollPosition
   } = window.FluigDragGeometry;
   const { defaultFlowMarkerSegment, findOrthogonalCrossings, routeOrthogonal } = window.FluigFlowRouter;
@@ -60,6 +60,8 @@
   const propertiesPanel = document.getElementById('propertiesPanel');
   const elementPalette = document.getElementById('elementPalette');
   const paletteToggle = document.getElementById('togglePalette');
+  const alignHorizontalButton = document.getElementById('alignHorizontal');
+  const alignVerticalButton = document.getElementById('alignVertical');
   const zoomResetButton = document.getElementById('zoomReset');
   const canvasBackgroundColorInput = document.getElementById('canvasBackgroundColor');
   const routeFlowsButton = document.getElementById('routeFlows');
@@ -111,7 +113,10 @@
     const message = event.data;
     if (message.type === 'model') renderModel(message.data);
     if (message.type === 'toast') showToast(message.message);
-    if (message.type === 'layoutComplete') state.layoutCommitPending = false;
+    if (message.type === 'layoutComplete') {
+      state.layoutCommitPending = false;
+      updateAlignmentButtons();
+    }
     if (message.type === 'taskConversionCancelled') state.taskConversionPending = false;
     if (message.type === 'taskCreationCancelled') state.layoutCommitPending = false;
     if (message.type === 'containerCreationCancelled') state.layoutCommitPending = false;
@@ -248,6 +253,8 @@
   });
 
   document.getElementById('zoomIn').addEventListener('click', () => setZoom(state.zoom + 0.1));
+  alignHorizontalButton.addEventListener('click', () => alignSelectedElements('horizontal'));
+  alignVerticalButton.addEventListener('click', () => alignSelectedElements('vertical'));
   document.getElementById('showProcess').addEventListener('click', () => {
     const process = state.data?.elements?.find((element) => element.tag === 'BpmnProcess');
     if (process) selectElement(process.id);
@@ -2157,7 +2164,94 @@
     state.selectedId = state.selectedIds.length === 1 ? state.selectedIds[0] : '';
     renderSelectionStyles();
     updatePropertiesVisibility();
+    updateAlignmentButtons();
     if (persist) persistViewState();
+  }
+
+  function selectedAlignmentIds() {
+    return state.selectedIds.filter((id) => {
+      const element = findElement(id);
+      return Boolean(findShape(id)) && element && !['SequenceFlow', 'BpmnProcess'].includes(element.tag);
+    });
+  }
+
+  function independentAlignmentIds(ids) {
+    const dependencies = new Map(ids.map((id) => [id, new Set(expandedDragIds([id]))]));
+    return ids.filter((id) => !ids.some((candidate) => (
+      candidate !== id && dependencies.get(candidate)?.has(id)
+    )));
+  }
+
+  function updateAlignmentButtons() {
+    const available = Boolean(state.data?.supported)
+      && !state.layoutCommitPending
+      && !state.isDragging
+      && independentAlignmentIds(selectedAlignmentIds()).length >= 2;
+    alignHorizontalButton.disabled = !available;
+    alignVerticalButton.disabled = !available;
+  }
+
+  function alignSelectedElements(orientation) {
+    if (state.layoutCommitPending || state.isDragging || state.pointerInteraction || state.flowEditInteraction) return;
+    const selectedIds = selectedAlignmentIds();
+    const rootIds = independentAlignmentIds(selectedIds);
+    if (rootIds.length < 2) {
+      showToast('Selecione pelo menos dois elementos independentes; fluxos nao entram no alinhamento.');
+      return;
+    }
+    const aligned = alignedCenterPositions(rootIds.map((id) => {
+      const shape = findShape(id);
+      const size = effectiveSize(shape, findElement(id));
+      return { id, x: shape.x, y: shape.y, width: size.width, height: size.height };
+    }), orientation);
+    const moves = new Map();
+    for (const position of aligned) {
+      const root = findShape(position.id);
+      const delta = { x: position.x - root.x, y: position.y - root.y };
+      for (const id of expandedDragIds([position.id])) {
+        const shape = findShape(id);
+        if (!shape) continue;
+        const move = { id, x: shape.x + delta.x, y: shape.y + delta.y };
+        const previous = moves.get(id);
+        if (previous && (previous.x !== move.x || previous.y !== move.y)) {
+          showToast('Alinhamento recusado: os elementos selecionados possuem dependencias visuais conflitantes.');
+          return;
+        }
+        moves.set(id, move);
+      }
+    }
+    const changedMoves = [...moves.values()].filter((move) => {
+      const shape = findShape(move.id);
+      return shape && (shape.x !== move.x || shape.y !== move.y);
+    });
+    if (!changedMoves.length) {
+      showToast(`Os ${rootIds.length} elementos ja estao alinhados.`);
+      return;
+    }
+    for (const move of changedMoves) {
+      const shape = findShape(move.id);
+      shape.x = move.x;
+      shape.y = move.y;
+    }
+    const connectionIds = incidentConnectionIds(changedMoves.map((move) => move.id));
+    const routed = routeConnections(connectionIds, false);
+    applyRoutedBendpoints(routed);
+    const canvas = fittedCanvas(diagramContentBounds());
+    state.data.canvas = { ...canvas };
+    redrawDiagram();
+    state.layoutCommitPending = true;
+    updateAlignmentButtons();
+    renderStatus(state.data);
+    vscode.postMessage({
+      type: 'updateLayout',
+      layout: {
+        moves: changedMoves,
+        connections: [...routed].map(([id, bendpoints]) => ({ id, bendpoints })),
+        canvas
+      }
+    });
+    const direction = orientation === 'horizontal' ? 'horizontalmente' : 'verticalmente';
+    showToast(`Alinhando ${rootIds.length} elementos ${direction} no arquivo .process...`);
   }
 
   function renderSelectionStyles() {
@@ -3497,6 +3591,7 @@
     renderConnections(state.data, firstForegroundNode());
     if (updateBounds) updateCanvasBounds(state.data);
     renderSelectionStyles();
+    updateAlignmentButtons();
   }
 
   function isDraggableElement(id) {

@@ -69,6 +69,20 @@ function getWebviewHtml(webview, scriptUri, styleUri, nonce, dragGeometryUri = '
     <div class="toolbar-actions">
       <label class="search"><span>Buscar</span><input id="search" type="search" placeholder="Código ou nome"></label>
       <button id="showProcess" title="Exibir as propriedades gerais do processo">Processo</button>
+      <button id="alignHorizontal" class="toolbar-icon-button" title="Alinhar horizontalmente pelos centros" aria-label="Alinhar horizontalmente pelos centros" disabled>
+        <svg viewBox="0 0 24 20" aria-hidden="true">
+          <path class="alignment-guide" d="M2 10h20"></path>
+          <rect x="3" y="6" width="7" height="8" rx="1"></rect>
+          <rect x="14" y="3" width="7" height="14" rx="1"></rect>
+        </svg>
+      </button>
+      <button id="alignVertical" class="toolbar-icon-button" title="Alinhar verticalmente pelos centros" aria-label="Alinhar verticalmente pelos centros" disabled>
+        <svg viewBox="0 0 24 20" aria-hidden="true">
+          <path class="alignment-guide" d="M12 1v18"></path>
+          <rect x="5" y="2" width="14" height="6" rx="1"></rect>
+          <rect x="8" y="12" width="8" height="6" rx="1"></rect>
+        </svg>
+      </button>
       <button id="zoomOut" title="Diminuir zoom (Ctrl + roda do mouse)">−</button>
       <button id="zoomReset" class="zoom-level" title="Ajustar o diagrama ao espaço disponível" aria-label="Ajustar o diagrama ao espaço disponível">100%</button>
       <button id="zoomIn" title="Aumentar zoom (Ctrl + roda do mouse)">+</button>

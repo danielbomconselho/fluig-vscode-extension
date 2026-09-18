@@ -46,6 +46,41 @@
     return { x, y };
   }
 
+  function alignedCenterPositions(items, orientation) {
+    if (!Array.isArray(items) || !items.length) return [];
+    if (!['horizontal', 'vertical'].includes(orientation)) {
+      throw new Error(`Orientacao de alinhamento invalida: ${orientation}.`);
+    }
+    const normalized = items.map((item) => ({
+      id: String(item?.id ?? ''),
+      x: finiteNumber(item?.x, 'x'),
+      y: finiteNumber(item?.y, 'y'),
+      width: finiteDimension(item?.width, 'width'),
+      height: finiteDimension(item?.height, 'height')
+    }));
+    const anchor = normalized[0];
+    const center = orientation === 'horizontal'
+      ? anchor.y + (anchor.height / 2)
+      : anchor.x + (anchor.width / 2);
+    return normalized.map((item) => ({
+      id: item.id,
+      x: orientation === 'vertical' ? Math.round(center - (item.width / 2)) : item.x,
+      y: orientation === 'horizontal' ? Math.round(center - (item.height / 2)) : item.y
+    }));
+  }
+
+  function finiteNumber(value, label) {
+    const number = Number(value);
+    if (!Number.isFinite(number)) throw new Error(`Coordenada invalida em ${label}.`);
+    return number;
+  }
+
+  function finiteDimension(value, label) {
+    const number = finiteNumber(value, label);
+    if (number < 0) throw new Error(`Dimensao invalida em ${label}.`);
+    return number;
+  }
+
   function constrainedAttachedDelta(delta, childBounds, parentBounds) {
     const childWidth = Math.max(0, childBounds.right - childBounds.left);
     const childHeight = Math.max(0, childBounds.bottom - childBounds.top);
@@ -191,6 +226,7 @@
   }
 
   return {
+    alignedCenterPositions,
     bestContextPadPosition,
     canvasViewBox,
     constrainedAttachedDelta,

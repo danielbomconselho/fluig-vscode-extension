@@ -296,6 +296,21 @@ test('interação contempla seleção múltipla e ocultação durante arraste', 
   assert.match(source, /fullyContained\(shapeBounds\(shape\), rectangle\)/);
 });
 
+test('toolbar alinha dois ou mais elementos e ignora fluxos selecionados', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'bpmn', 'webviewHtml.ts'), 'utf8');
+  const source = fs.readFileSync(path.join(__dirname, '..', '..', 'media', 'bpmn', 'editor.js'), 'utf8');
+  const styles = fs.readFileSync(path.join(__dirname, '..', '..', 'media', 'bpmn', 'editor.css'), 'utf8');
+
+  assert.match(html, /id="alignHorizontal"/);
+  assert.match(html, /id="alignVertical"/);
+  assert.match(source, /function alignSelectedElements\(orientation\)/);
+  assert.match(source, /!\['SequenceFlow', 'BpmnProcess'\]\.includes\(element\.tag\)/);
+  assert.match(source, /alignedCenterPositions/);
+  assert.match(source, /rootIds\.length < 2/);
+  assert.match(source, /type: 'updateLayout'/);
+  assert.match(styles, /\.toolbar-icon-button/);
+});
+
 test('evento de erro anexado acompanha a atividade e não exibe texto externo', () => {
   const source = fs.readFileSync(path.join(__dirname, '..', '..', 'media', 'bpmn', 'editor.js'), 'utf8');
   assert.match(source, /function attachedDragIds/);
