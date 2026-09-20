@@ -130,5 +130,6 @@ test('fluxos usam as cores semanticas do Fluig inclusive nas setas e rotulos', (
   assert.match(styles, /\.flow-label \{ fill: #000;/);
   assert.match(styles, /\.return-arrow-head \{ fill: #e53935; \}/);
   assert.match(styles, /\.automatic-arrow-head \{ fill: #2da44e; \}/);
-  assert.match(source, /const marker = automatic \? 'url\(#arrowAutomatic\)' : permitsReturn \? 'url\(#arrowReturn\)' : 'url\(#arrow\)'/);
+  assert.match(source, /const marker = documentaryAssociation \? '' : \(automatic \? 'url\(#arrowAutomatic\)' : permitsReturn \? 'url\(#arrowReturn\)' : 'url\(#arrow\)'\)/);
+  assert.match(styles, /\.flow\.documentary-association \{[^}]*stroke-dasharray: 6 5;/);
 });

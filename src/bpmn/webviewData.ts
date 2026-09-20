@@ -23,6 +23,7 @@ const { subProcessFormMapDefinition } = require('./subProcessFormMap');
 function toWebviewData(model, validation, options = {}) {
   const businessById = new Map([...model.elements, ...model.flows].map((element) => [element.id, element]));
   const signalCatalog = signalCatalogFromElements(model.elements);
+  const intermediateLinkCatalog = intermediateLinkCatalogFromElements(model.elements);
   const elements = [...model.elements, ...model.flows].map((element) => ({
     id: element.id,
     code: diagramElementCode(element),
@@ -31,8 +32,15 @@ function toWebviewData(model, validation, options = {}) {
     type: element.type,
     typeLabel: element.typeLabel,
     attributes: element.attributes,
-    configurationIssues: elementConfigurationIssues(element),
-    editableProperties: editablePropertyDefinitions(element, options.formFields ?? [], signalCatalog, options.processCatalog ?? []),
+    configurationIssues: elementConfigurationIssues(element, businessById),
+    editableProperties: editablePropertyDefinitions(
+      element,
+      options.formFields ?? [],
+      signalCatalog,
+      options.processCatalog ?? [],
+      intermediateLinkCatalog,
+      businessById
+    ),
     processGeneralEditor: processGeneralDefinition(
       element,
       options.volumeCatalog ?? [],
@@ -137,17 +145,30 @@ function diagramElementCode(element) {
   return element.id.match(/(\d+)$/)?.[1] ?? '';
 }
 
-function editablePropertyDefinitions(element, formFields, signalCatalog, processCatalog) {
+function editablePropertyDefinitions(element, formFields, signalCatalog, processCatalog, intermediateLinkCatalog, businessById) {
   const syntheticValues = element.tag === 'BpmnTask' && element.type === '84'
     ? messageDataValues(element.attributes.messageData)
     : {};
-  return [...allowedPropertiesFor(element)].map((name) => (
+  const propertyNames = isDocumentaryAssociation(element, businessById)
+    ? [...allowedPropertiesFor(element)].filter((name) => name === 'name')
+    : [...allowedPropertiesFor(element)];
+  return propertyNames.map((name) => (
     propertyDefinition(
       name,
       Object.hasOwn(syntheticValues, name) ? syntheticValues[name] : element.attributes[name],
-      { formFields, signalCatalog, processCatalog }
+      { formFields, signalCatalog, processCatalog, intermediateLinkCatalog }
     )
   ));
+}
+
+function intermediateLinkCatalogFromElements(elements) {
+  return elements
+    .filter((element) => element.tag === 'BpmnIntermediateEvent' && element.type === '42')
+    .map((element) => ({
+      value: element.id,
+      label: `${element.id} - ${element.name || element.typeLabel}`
+    }))
+    .sort((left, right) => left.label.localeCompare(right.label, 'pt-BR'));
 }
 
 function signalCatalogFromElements(elements) {
@@ -261,9 +282,11 @@ function numericXmlAttribute(node, name) {
   return Number.isFinite(value) ? value : 0;
 }
 
-function elementConfigurationIssues(element) {
-  const incoming = splitReferences(element.attributes.incoming);
-  const outgoing = splitReferences(element.attributes.outgoing);
+function elementConfigurationIssues(element, businessById = new Map()) {
+  const incoming = splitReferences(element.attributes.incoming)
+    .filter((flowId) => !isDocumentaryAssociation(businessById.get(flowId), businessById));
+  const outgoing = splitReferences(element.attributes.outgoing)
+    .filter((flowId) => !isDocumentaryAssociation(businessById.get(flowId), businessById));
   const issues = [];
   if (element.tag === 'BpmnStartEvent') {
     if (!outgoing.length) issues.push('Evento inicial sem fluxo de saída.');
@@ -273,8 +296,24 @@ function elementConfigurationIssues(element) {
     if (!incoming.length) issues.push('Elemento sem fluxo de entrada.');
     if (!outgoing.length) issues.push('Elemento sem fluxo de saída.');
   }
+  if (element.tag === 'BpmnIntermediateEvent' && element.type === '36') {
+    const linkId = String(element.attributes?.linkId ?? '').trim();
+    const receiver = businessById.get(linkId);
+    if (!linkId || linkId === '0') {
+      issues.push('Evento de envio de link sem evento receptor configurado.');
+    } else if (receiver?.tag !== 'BpmnIntermediateEvent' || receiver?.type !== '42') {
+      issues.push(`Evento receptor de link inválido: ${linkId}.`);
+    }
+  }
   if (element.tag === 'BpmnGateway') issues.push(...gatewayConfigurationIssues(element));
   return issues;
+}
+
+function isDocumentaryAssociation(flow, businessById) {
+  if (flow?.tag !== 'SequenceFlow') return false;
+  const artifactTags = new Set(['BpmnAnnotation', 'BpmnDatabase', 'BpmnDocument']);
+  return artifactTags.has(businessById.get(flow.attributes.sourceRef)?.tag)
+    || artifactTags.has(businessById.get(flow.attributes.targetRef)?.tag);
 }
 
 function gatewayConfigurationIssues(element) {
@@ -358,6 +397,27 @@ function propertyDefinition(name, rawValue, options = {}) {
       ]
     };
   }
+  if (name === 'linkId') {
+    const current = String(rawValue ?? '').trim();
+    const catalog = [...(options.intermediateLinkCatalog ?? [])];
+    if (current && !catalog.some((item) => item.value === current)) {
+      catalog.unshift({ value: current, label: `${current} (valor atual não encontrado)` });
+    }
+    return {
+      name,
+      kind: 'select',
+      value: current,
+      options: [
+        {
+          value: '',
+          label: catalog.length
+            ? 'Selecione um evento de recebimento de link'
+            : 'Nenhum evento de recebimento de link encontrado'
+        },
+        ...catalog
+      ]
+    };
+  }
   if (name === 'messageReceiver') {
     return {
       name,
@@ -408,4 +468,12 @@ function minutesToDuration(rawValue) {
   return `${String(hours).padStart(3, '0')}:${String(minutes % 60).padStart(2, '0')}`;
 }
 
-module.exports = { boundaryPoint, diagramElementCode, elementConfigurationIssues, minutesToDuration, signalCatalogFromElements, toWebviewData };
+module.exports = {
+  boundaryPoint,
+  diagramElementCode,
+  elementConfigurationIssues,
+  intermediateLinkCatalogFromElements,
+  minutesToDuration,
+  signalCatalogFromElements,
+  toWebviewData
+};

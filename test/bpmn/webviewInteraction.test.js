@@ -184,9 +184,13 @@ test('evento isolado ou conectado pode ser excluído com verificação cross-arq
   assert.match(source, /type: 'deleteIsolatedEvent', elementId: element\.id/);
   assert.match(provider, /applyIsolatedEventDeletion\(document, panel, message\.elementId\)/);
   assert.match(provider, /findProjectNodeReferences\(document, preview\.elementId, preview\.activityCode\)/);
+  assert.match(provider, /resolveConditionalEventScript\(document, preview\.elementId\)/);
+  assert.match(provider, /referencesOutsideLinkedScript/);
+  assert.match(provider, /createRelatedFileBackup\(vscode, document, currentLinkedScript\.uri\)/);
+  assert.match(provider, /edit\.deleteFile\(currentLinkedScript\.uri/);
   assert.match(provider, /Código\/WKNumState/);
   assert.match(provider, /Fluxos removidos junto/);
-  assert.match(provider, /fluxos incidentes listados serão removidos atomicamente/);
+  assert.match(provider, /script condicional vinculado serão removidos em uma única operação/);
   assert.match(provider, /'Excluir evento'/);
 });
 
@@ -207,22 +211,27 @@ test('gateway isolado ou conectado com condição vazia pode ser excluído com v
   assert.match(provider, /'Excluir gateway'/);
 });
 
-test('atividade isolada ou conectada sem script ou evento pode ser excluída com verificação cross-arquivo', () => {
+test('atividade isolada ou conectada pode ser excluída com o seu script e verificação cross-arquivo', () => {
   const source = fs.readFileSync(path.join(__dirname, '..', '..', 'media', 'bpmn', 'editor.js'), 'utf8');
   const provider = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'bpmn', 'FluigProcessEditorProvider.ts'), 'utf8');
   assert.match(source, /function isDeletableIsolatedTask\(element\)/);
   assert.match(source, /element\.tag !== 'BpmnTask'/);
   assert.match(source, /\['80', '81', '82', '84', '85', '86', '87'\]\.includes\(String\(element\.type\)\)/);
   assert.match(source, /attributes\?\.attachedEvents/);
-  assert.match(source, /attributes\?\.scriptFileName/);
+  assert.doesNotMatch(
+    source.slice(source.indexOf('function isDeletableIsolatedTask'), source.indexOf('function requestSelectedIsolatedSubProcessDeletion')),
+    /attributes\?\.scriptFileName/
+  );
   assert.doesNotMatch(source.slice(source.indexOf('function isDeletableIsolatedTask'), source.indexOf('function requestSelectedIsolatedSubProcessDeletion')), /attributes\?\.incoming/);
   assert.doesNotMatch(source.slice(source.indexOf('function isDeletableIsolatedTask'), source.indexOf('function requestSelectedIsolatedSubProcessDeletion')), /attributes\?\.outgoing/);
   assert.match(source, /type: 'deleteIsolatedTask', elementId: element\.id/);
   assert.match(provider, /applyIsolatedTaskDeletion\(document, panel, message\.elementId\)/);
   assert.match(provider, /deleteIsolatedTask\(document\.getText\(\), elementId\)/);
-  assert.match(provider, /path\.basename\(uri\.fsPath\)\.split\('\.'\)\.includes\(elementId\)/);
+  assert.match(provider, /resolveTaskScript\(document, preview\.elementId\)/);
+  assert.match(provider, /createRelatedFileBackup\(vscode, document, currentLinkedScript\.uri\)/);
+  assert.match(provider, /edit\.deleteFile\(currentLinkedScript\.uri/);
   assert.match(provider, /Fluxos removidos junto/);
-  assert.match(provider, /fluxos incidentes listados serão removidos atomicamente/);
+  assert.match(provider, /script vinculado serão removidos atomicamente/);
   assert.match(provider, /'Excluir atividade'/);
 });
 
@@ -268,7 +277,7 @@ test('subprocesso isolado ou conectado pode ser excluído sem alterar o processo
   assert.match(provider, /'Excluir subprocesso'/);
 });
 
-test('artefato isolado pode ser excluído sem limpeza automática ou recurso externo', () => {
+test('artefato pode ser excluído com suas associações sem remover recurso externo', () => {
   const source = fs.readFileSync(path.join(__dirname, '..', '..', 'media', 'bpmn', 'editor.js'), 'utf8');
   const provider = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'bpmn', 'FluigProcessEditorProvider.ts'), 'utf8');
   assert.match(source, /function isDeletableIsolatedArtifact\(element\)/);
@@ -281,7 +290,20 @@ test('artefato isolado pode ser excluído sem limpeza automática ou recurso ext
   assert.match(provider, /findProjectNodeReferences\(document, preview\.elementId, ''\)/);
   assert.match(provider, /Documento GED: \$\{preview\.documentId \|\| 'não informado'\} \(será preservado\)/);
   assert.match(provider, /Elementos dentro ou sobrepostos ao grupo serão preservados/);
-  assert.match(provider, /Fluxos, scripts, formulários e recursos externos não serão excluídos/);
+  assert.match(provider, /Associações visuais removidas junto/);
+  assert.match(provider, /Scripts, formulários e recursos externos não serão excluídos/);
+});
+
+test('seleção múltipla exclui elementos e scripts vinculados em uma operação atômica', () => {
+  const source = fs.readFileSync(path.join(__dirname, '..', '..', 'media', 'bpmn', 'editor.js'), 'utf8');
+  const provider = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'bpmn', 'FluigProcessEditorProvider.ts'), 'utf8');
+  const patcher = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'bpmn', 'processPatcher.ts'), 'utf8');
+  assert.match(source, /function requestMultipleElementDeletion\(\)/);
+  assert.match(source, /type: 'deleteMultipleElements', elementIds/);
+  assert.match(provider, /applyMultipleElementDeletion\(document, panel, message\.elementIds\)/);
+  assert.match(provider, /resolveLinkedScriptsForElementIds/);
+  assert.match(provider, /'Excluir seleção'/);
+  assert.match(patcher, /function deleteDiagramElements\(text, elementIds\)/);
 });
 
 test('interação contempla seleção múltipla e ocultação durante arraste', () => {
@@ -294,6 +316,21 @@ test('interação contempla seleção múltipla e ocultação durante arraste', 
   assert.match(source, /layoutCommitPending/);
   assert.match(source, /function beginMarqueeInteraction/);
   assert.match(source, /fullyContained\(shapeBounds\(shape\), rectangle\)/);
+});
+
+test('toolbar exibe erros agrupados por elemento e permite navegar ao item', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'bpmn', 'webviewHtml.ts'), 'utf8');
+  const source = fs.readFileSync(path.join(__dirname, '..', '..', 'media', 'bpmn', 'editor.js'), 'utf8');
+  const styles = fs.readFileSync(path.join(__dirname, '..', '..', 'media', 'bpmn', 'editor.css'), 'utf8');
+  assert.match(html, /id="showErrors"[^>]*>Erros \(0\)<\/button>/);
+  assert.match(html, /id="validationDialog"/);
+  assert.match(source, /function validationProblemGroups\(data\)/);
+  assert.match(source, /element\.configurationIssues/);
+  assert.match(source, /data\.validation\?\.errors/);
+  assert.match(source, /function createValidationProblemGroup\(group\)/);
+  assert.match(source, /focusDiagramElement\(group\.elementId\)/);
+  assert.match(styles, /\.validation-dialog::backdrop/);
+  assert.match(styles, /\.validation-problem-group/);
 });
 
 test('toolbar alinha dois ou mais elementos e ignora fluxos selecionados', () => {
@@ -398,11 +435,23 @@ test('paleta cria pool e raia interna ou independente sem duplicar ação na too
   assert.match(source, /type: 'createPool', pool: request/);
   assert.match(source, /function finishPaletteLanePlacement\(event, placement\)/);
   assert.match(source, /type: 'createSwimLane', lane: request/);
-  assert.match(provider, /createPool\(document\.getText\(\), pool\)/);
-  assert.match(provider, /createSwimLane\(document\.getText\(\), lane\)/);
+  assert.match(provider, /createPool\(document\.getText\(\), \{ \.\.\.pool, templateText \}\)/);
+  assert.match(provider, /createSwimLane\(document\.getText\(\), \{ \.\.\.lane, templateText \}\)/);
   assert.match(provider, /await this\.backupService\.ensureBackup\(vscode, document\)/);
   assert.match(styles, /\.container-placement-ghost/);
   assert.match(styles, /\.element-palette/);
+});
+
+test('pool e raia podem ser excluidas pela lixeira, painel ou tecla Delete', () => {
+  const source = fs.readFileSync(path.join(__dirname, '..', '..', 'media', 'bpmn', 'editor.js'), 'utf8');
+  const provider = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'bpmn', 'FluigProcessEditorProvider.ts'), 'utf8');
+  const patcher = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'bpmn', 'processPatcher.ts'), 'utf8');
+  assert.match(source, /function isDeletableContainer\(element\)/);
+  assert.match(source, /\['BpmnPool', 'BpmnSwimLane'\]\.includes\(element\.tag\)/);
+  assert.match(source, /type: 'deleteDiagramContainer', elementId: element\.id/);
+  assert.match(source, /if \(event\.key === 'Delete'/);
+  assert.match(provider, /applyDiagramContainerDeletion\(document, panel, message\.elementId\)/);
+  assert.match(patcher, /function deleteDiagramContainer\(text, elementId\)/);
 });
 
 test('toolbar abre propriedades gerais do processo e grava por editor dedicado', () => {
@@ -473,7 +522,7 @@ test('paleta fixa oferece criação isolada e ferramenta de seleção por área'
   assert.match(source, /function finishPalettePlacement\(event\)/);
   assert.match(source, /type: 'createIsolatedNode', node: request/);
   assert.match(source, /state\.activeTool !== 'marquee'/);
-  assert.match(provider, /createIsolatedNode\(document\.getText\(\), node\)/);
+  assert.match(provider, /createIsolatedNode\(document\.getText\(\), \{ \.\.\.node, templateText \}\)/);
   for (const subtype of ['10', '12', '13', '14', '16', '60', '63', '64', '65', '66', '68', '30', '32', '35', '36', '37', '39', '41', '42', '43', '80', '81', '82', '84', '85', '86', '87', '100', '101', '120', '121', '126', '127']) {
     assert.match(html, new RegExp(`data-subtype="${subtype}"`));
   }
@@ -760,6 +809,22 @@ test('processo edita codigo, escolhe servidor cadastrado e configura gestor', ()
   assert.match(source, /type: 'updateProcessManager', elementId: element\.id, assignment/);
   assert.match(provider, /discoverServerCatalog\(vscode, document\.uri\)/);
   assert.match(provider, /patchProcessManager\(document\.getText\(\), elementId, assignment\)/);
+  assert.match(provider, /applyControlledProcessRename\(document, panel, elementId, result\)/);
+  assert.match(provider, /provideExternalProcessRenameEdits\(event\)/);
+  assert.match(provider, /discoverRelatedArtifactRenames/);
+  assert.match(provider, /onDidSaveTextDocument\(\(document\) =>/);
+  assert.match(provider, /refactorSavedProcessIdentity\(document\)/);
+  assert.match(provider, /edit\.renameFile\(document\.uri, processTarget/);
+  const applyIdentity = provider.slice(
+    provider.indexOf('async applyControlledProcessRename'),
+    provider.indexOf('async refactorSavedProcessIdentity')
+  );
+  assert.doesNotMatch(applyIdentity, /renameFile\(/);
+  assert.match(applyIdentity, /Salve o \.process para concluir a refatoracao/);
+  assert.match(source, /scripts, literais e artefatos vinculados/);
+  const readForm = source.match(/function readForm\(\) \{[\s\S]*?\n  \}/)?.[0] ?? '';
+  assert.match(readForm, /querySelectorAll\('\[data-property-name\]'\)/);
+  assert.doesNotMatch(readForm, /propertyForm\.elements/);
 });
 
 test('webview invalida cache dos recursos e sempre apresenta Campos no subprocesso comum', () => {
@@ -777,4 +842,15 @@ test('webview invalida cache dos recursos e sempre apresenta Campos no subproces
   const rowBuilder = source.match(/function createSubProcessFormMapRow\([\s\S]*?\n  \}\n\n  function createSubProcessFormMapSelect/)?.[0] ?? '';
   assert.match(rowBuilder, /row\.append\(\s*legend,/);
   assert.match(source, /if \(rowTitle\) rowTitle\.textContent = `Mapeamento \$\{index \+ 1\}`/);
+});
+
+test('evento intermediate link exibe o seletor Link no painel geral', () => {
+  const source = fs.readFileSync(path.join(__dirname, '..', '..', 'media', 'bpmn', 'editor.js'), 'utf8');
+  const styles = fs.readFileSync(path.join(__dirname, '..', '..', 'media', 'bpmn', 'editor.css'), 'utf8');
+  assert.match(source, /if \(name === 'linkId'\) return 'Link'/);
+  assert.match(source, /function navigateToLinkedEvent\(elementId\)/);
+  assert.match(source, /navigateButton\.textContent = 'Ir para o link selecionado'/);
+  assert.match(source, /selectElement\(elementId\)/);
+  assert.match(source, /canvasScroller\.scrollTo\(\{/);
+  assert.match(styles, /\.link-navigation-controls \{ display: grid; gap: 6px; \}/);
 });

@@ -2,6 +2,17 @@
 
 ## 2.12.0
 
+- Permite excluir pools e raias pela lixeira, painel de propriedades, tecla Delete ou selecao multipla, preservando os elementos do fluxo e redistribuindo as raias restantes.
+
+- Adiciona o botão `Erros`, com lista de problemas agrupada por elemento e navegação direta para o item no diagrama.
+- Permite excluir em lote os elementos selecionados, incluindo fluxos incidentes e scripts pertencentes à seleção, com backup e validação estrutural.
+- Habilita a exclusão segura das atividades de negócio, script e serviço; o script vinculado à tarefa é removido na mesma operação.
+- Permite ligar anotações, databases e documentos a atividades por associações visuais pontilhadas, sem tratá-las como fluxos executáveis.
+- Exclui o arquivo JavaScript vinculado ao remover um evento condicional, cria backup dos dois artefatos e mantém o bloqueio para referências externas reais.
+- Adiciona ao evento intermediario de link a acao de selecionar e centralizar no diagrama o evento receptor configurado.
+- Mapeia o `intermediate link` do Fluig: o evento de envio seleciona um evento intermediario receptor, grava `linkId` e sinaliza vinculos ausentes ou invalidos.
+- Restringe a geracao automatica de ECM30 aos diagramas reais em `workflow/diagrams`, ignorando backups `.process`, e garante que a exportacao aguarde o ECM30 atualizado.
+- Torna a alteracao do codigo do processo uma renomeacao controlada: aplica o novo codigo no editor e, ao salvar, sincroniza o `.process`, scripts, literais e artefatos vinculados; a refatoracao tambem funciona ao renomear pelo Explorer.
 - Adiciona alinhamento horizontal e vertical por centro para dois ou mais elementos selecionados, preservando dependencias visuais e recalculando os fluxos incidentes.
 - Permite excluir individualmente os pontos intermediarios de um fluxo pela lixeira exibida no hover e redesenha a rota restante.
 - Remove o JRE portatil do VSIX e torna a descoberta do Java multiplataforma via configuracao global, `JAVA_HOME` ou `PATH`.

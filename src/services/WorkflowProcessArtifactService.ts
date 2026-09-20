@@ -8,12 +8,16 @@ const {
     resolveJavaExecutable,
     writeEcm30Artifact,
 } = require("./Ecm30GenerationService");
+const {
+    ecm30PathForProcess,
+    isWorkflowDiagramProcessPath,
+} = require("./workflowProcessPath");
 
 export class WorkflowProcessArtifactService {
     private static context: vscode.ExtensionContext;
     private static output: vscode.OutputChannel;
     private static timers = new Map<string, NodeJS.Timeout>();
-    private static running = new Set<string>();
+    private static running = new Map<string, Promise<any>>();
     private static rerun = new Set<string>();
     private static lastErrors = new Map<string, string>();
 
@@ -26,13 +30,16 @@ export class WorkflowProcessArtifactService {
             WorkflowProcessArtifactService.scheduleAutomaticGeneration(document.uri);
         }));
 
-        const watcher = vscode.workspace.createFileSystemWatcher("**/*.process");
+        const watcher = vscode.workspace.createFileSystemWatcher("**/workflow/diagrams/*.process");
         context.subscriptions.push(watcher);
         context.subscriptions.push(watcher.onDidChange(uri => {
             WorkflowProcessArtifactService.scheduleAutomaticGeneration(uri);
         }));
         context.subscriptions.push(watcher.onDidCreate(uri => {
             WorkflowProcessArtifactService.scheduleAutomaticGeneration(uri);
+        }));
+        context.subscriptions.push(watcher.onDidDelete(uri => {
+            WorkflowProcessArtifactService.cancelAutomaticGeneration(uri);
         }));
     }
 
@@ -49,8 +56,47 @@ export class WorkflowProcessArtifactService {
         }
     }
 
+    public static async ensureGenerated(processUri: vscode.Uri): Promise<void> {
+        if (!isWorkflowDiagramProcessPath(processUri.fsPath)) {
+            throw new Error("O arquivo .process deve estar diretamente em workflow/diagrams.");
+        }
+
+        const key = path.normalize(processUri.fsPath).toLowerCase();
+        WorkflowProcessArtifactService.cancelAutomaticGeneration(processUri);
+
+        const running = WorkflowProcessArtifactService.running.get(key);
+        if (running) {
+            await running;
+        }
+
+        const outputUri = vscode.Uri.file(ecm30PathForProcess(processUri.fsPath));
+        try {
+            const [processStat, outputStat] = await Promise.all([
+                vscode.workspace.fs.stat(processUri),
+                vscode.workspace.fs.stat(outputUri),
+            ]);
+            if (outputStat.mtime + 1000 >= processStat.mtime) {
+                return;
+            }
+        } catch (_error) {
+            // Ausente ou desatualizado: a geração abaixo produzirá o artefato.
+        }
+
+        const operation = WorkflowProcessArtifactService.generateForUri(processUri, false);
+        WorkflowProcessArtifactService.running.set(key, operation);
+        try {
+            await operation;
+            WorkflowProcessArtifactService.lastErrors.delete(key);
+        } finally {
+            WorkflowProcessArtifactService.running.delete(key);
+            if (WorkflowProcessArtifactService.rerun.delete(key)) {
+                WorkflowProcessArtifactService.scheduleAutomaticGeneration(processUri);
+            }
+        }
+    }
+
     private static scheduleAutomaticGeneration(uri: vscode.Uri): void {
-        if (path.extname(uri.fsPath).toLowerCase() !== ".process") {
+        if (!isWorkflowDiagramProcessPath(uri.fsPath)) {
             return;
         }
         const enabled = vscode.workspace
@@ -71,15 +117,27 @@ export class WorkflowProcessArtifactService {
         }, 700));
     }
 
+    private static cancelAutomaticGeneration(uri: vscode.Uri): void {
+        const key = path.normalize(uri.fsPath).toLowerCase();
+        const pending = WorkflowProcessArtifactService.timers.get(key);
+        if (pending) {
+            clearTimeout(pending);
+        }
+        WorkflowProcessArtifactService.timers.delete(key);
+        WorkflowProcessArtifactService.rerun.delete(key);
+        WorkflowProcessArtifactService.lastErrors.delete(key);
+    }
+
     private static async runAutomaticGeneration(uri: vscode.Uri, key: string): Promise<void> {
         if (WorkflowProcessArtifactService.running.has(key)) {
             WorkflowProcessArtifactService.rerun.add(key);
             return;
         }
 
-        WorkflowProcessArtifactService.running.add(key);
+        const operation = WorkflowProcessArtifactService.generateForUri(uri, false);
+        WorkflowProcessArtifactService.running.set(key, operation);
         try {
-            const written = await WorkflowProcessArtifactService.generateForUri(uri, false);
+            const written = await operation;
             WorkflowProcessArtifactService.lastErrors.delete(key);
             WorkflowProcessArtifactService.output.appendLine(
                 `[${new Date().toISOString()}] ECM30 atualizado: ${written.filePath} (${written.bytes} bytes)`
@@ -113,6 +171,10 @@ export class WorkflowProcessArtifactService {
     }
 
     private static async generateForUri(uri: vscode.Uri, interactive: boolean): Promise<any> {
+        if (!isWorkflowDiagramProcessPath(uri.fsPath)) {
+            throw new Error("O arquivo .process deve estar diretamente em workflow/diagrams.");
+        }
+
         const configuration = vscode.workspace.getConfiguration("fluiggers");
         const extensionDirectory = WorkflowProcessArtifactService.context.extensionUri.fsPath;
         const bundledPluginsPath = vscode.Uri.joinPath(
@@ -157,12 +219,7 @@ export class WorkflowProcessArtifactService {
         }
 
         const processId = path.basename(uri.fsPath, ".process");
-        const outputPath = path.resolve(
-            path.dirname(uri.fsPath),
-            "..",
-            ".resources",
-            `${processId}.ecm30.xml`
-        );
+        const outputPath = ecm30PathForProcess(uri.fsPath);
         const bridgeClassesDirectory = vscode.Uri.joinPath(
             WorkflowProcessArtifactService.context.extensionUri,
             "tools",
@@ -204,8 +261,13 @@ export class WorkflowProcessArtifactService {
     }
 
     private static resolveProcessUri(processUri?: vscode.Uri): vscode.Uri | undefined {
-        const selectedUri = processUri || vscode.window.activeTextEditor?.document.uri;
-        if (!selectedUri || path.extname(selectedUri.fsPath).toLowerCase() !== ".process") {
+        const activeTab = vscode.window.tabGroups.activeTabGroup.activeTab;
+        const tabInput = activeTab?.input;
+        const tabUri = tabInput instanceof vscode.TabInputText || tabInput instanceof vscode.TabInputCustom
+            ? tabInput.uri
+            : undefined;
+        const selectedUri = processUri || vscode.window.activeTextEditor?.document.uri || tabUri;
+        if (!selectedUri || !isWorkflowDiagramProcessPath(selectedUri.fsPath)) {
             vscode.window.showErrorMessage("Selecione um arquivo .process.");
             return;
         }

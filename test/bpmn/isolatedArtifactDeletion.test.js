@@ -5,7 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { parseProcess } = require('../../src/bpmn/processModel');
-const { deleteIsolatedArtifact } = require('../../src/bpmn/processPatcher');
+const { createSequenceFlow, deleteIsolatedArtifact } = require('../../src/bpmn/processPatcher');
 const { validateProcess } = require('../../src/bpmn/processValidator');
 const { walk } = require('../../src/bpmn/xmlTokenizer');
 
@@ -23,10 +23,11 @@ function serializedNodes(text, nodes) {
 }
 
 function connectedArtifactFixture() {
-  return fixture
-    .replaceAll('task5', 'annotationtask5')
-    .replace('<bpmn2:BpmnTask id="annotationtask5"', '<bpmn2:BpmnAnnotation id="annotationtask5"')
-    .replace('type="80"', 'type="0"');
+  return createSequenceFlow(fixture, {
+    sourceId: 'annotationtask7',
+    targetId: 'mailtask31',
+    bendpoints: [{ x: 640, y: 410 }]
+  });
 }
 
 test('exclui os quatro artefatos isolados sem alterar fluxos ou recursos externos', () => {
@@ -94,8 +95,16 @@ test('exclui grupo inicial e recalcula children.N preservando elementos e paleta
   assert.equal(result.validation.ok, true);
 });
 
-test('recusa artefato conectado, referenciado, tipo inválido e arquivo inválido', () => {
-  assert.throws(() => deleteIsolatedArtifact(connectedArtifactFixture(), 'annotationtask5'), /fluxo de entrada ou saída/);
+test('exclui artefato conectado e sua associação visual', () => {
+  const connected = connectedArtifactFixture();
+  const result = deleteIsolatedArtifact(connected.text, 'annotationtask7');
+  assert.deepEqual(result.removedFlowIds, [connected.flowId]);
+  assert.equal(result.model.elements.some((item) => item.id === 'annotationtask7'), false);
+  assert.equal(result.model.flows.some((item) => item.id === connected.flowId), false);
+  assert.equal(result.validation.ok, true);
+});
+
+test('recusa artefato referenciado, tipo inválido e arquivo inválido', () => {
   assert.throws(() => deleteIsolatedArtifact(fixture, 'task5'), /somente anotações, databases, documentos e grupos/);
   assert.throws(() => deleteIsolatedArtifact(fixture, 'annotationtask999'), /não encontrado ou duplicado/);
 

@@ -3,6 +3,7 @@
 const vscode = require('vscode');
 const crypto = require('node:crypto');
 const path = require('node:path');
+const zlib = require('node:zlib');
 const { parseProcess } = require('./processModel');
 const {
   convertTaskType,
@@ -22,6 +23,8 @@ const {
   deleteIsolatedGateway,
   deleteIsolatedSubProcess,
   deleteIsolatedTask,
+  deleteDiagramContainer,
+  deleteDiagramElements,
   deleteSequenceFlow,
   patchGatewayBranches,
   patchEventInitializer,
@@ -39,6 +42,7 @@ const {
   patchProcessForm,
   patchProcessAttachmentSecurity,
   patchProcessGeneral,
+  patchProcessIdentity,
   patchProcessVersion,
   patchProcessManager,
   patchProcess
@@ -55,8 +59,14 @@ const { RemoteFormCatalogService } = require('./remoteFormCatalog');
 const { discoverMechanismCatalog } = require('./mechanismCatalog');
 const { discoverUserCatalog } = require('./userCatalog');
 const { findLikelyNodeReferences, projectRootForProcessPath } = require('./nodeReferenceScanner');
+const { parseEventTriggerData } = require('./eventTrigger');
 const { buildTranslationPlan, LOCALES, validateTranslationPlan } = require('./translationService');
 const { TranslationPreviewProvider } = require('./translationPreviewProvider');
+const {
+  assertDistinctProcessCode,
+  processCodeFromFilePath,
+  renamedArtifactName
+} = require('./processIdentity');
 
 class FluigProcessEditorProvider {
   static viewType = 'fluigBpmn.processEditor';
@@ -73,6 +83,49 @@ class FluigProcessEditorProvider {
     ));
     /** @type {Map<string, vscode.TextDocument>} */
     this.documents = new Map();
+    /** @type {Set<string>} */
+    this.internalProcessRenames = new Set();
+    /** @type {Map<string, {oldCode:string,newCode:string,relatedCount:number}>} */
+    this.externalProcessRenameSummaries = new Map();
+    /** @type {Map<string, {oldCode:string,newCode:string,relatedCount:number}>} */
+    this.pendingProcessRenames = new Map();
+    /** @type {Set<string>} */
+    this.processSaveRefactors = new Set();
+    /** @type {Promise<string>|undefined} */
+    this.creationTemplateTextPromise = undefined;
+    context.subscriptions.push(
+      vscode.workspace.onWillRenameFiles((event) => {
+        event.waitUntil(this.provideExternalProcessRenameEdits(event));
+      }),
+      vscode.workspace.onDidRenameFiles((event) => {
+        this.handleCompletedProcessRenames(event);
+      }),
+      vscode.workspace.onDidSaveTextDocument((document) => {
+        void this.refactorSavedProcessIdentity(document);
+      })
+    );
+  }
+
+  async loadCreationTemplateText() {
+    if (!this.creationTemplateTextPromise) {
+      this.creationTemplateTextPromise = (async () => {
+        const relativeCandidates = [
+          ['runtime', 'bpmn', 'creation-template.process.gz.b64'],
+          ['test', 'bpmn', 'fixtures', 'toexportbpmnteste.process.gz.b64']
+        ];
+        for (const segments of relativeCandidates) {
+          try {
+            const uri = vscode.Uri.joinPath(this.context.extensionUri, ...segments);
+            const encoded = Buffer.from(await vscode.workspace.fs.readFile(uri)).toString('utf8').trim();
+            if (encoded) return zlib.gunzipSync(Buffer.from(encoded, 'base64')).toString('utf8');
+          } catch {
+            // Tenta a proxima localizacao (runtime empacotado ou arvore de desenvolvimento).
+          }
+        }
+        throw new Error('O catálogo visual interno para criação de elementos não foi encontrado.');
+      })();
+    }
+    return this.creationTemplateTextPromise;
   }
 
   /**
@@ -244,6 +297,12 @@ class FluigProcessEditorProvider {
       }
       if (message.type === 'deleteIsolatedArtifact') {
         void this.applyIsolatedArtifactDeletion(document, panel, message.elementId);
+      }
+      if (message.type === 'deleteDiagramContainer') {
+        void this.applyDiagramContainerDeletion(document, panel, message.elementId);
+      }
+      if (message.type === 'deleteMultipleElements') {
+        void this.applyMultipleElementDeletion(document, panel, message.elementIds);
       }
       if (message.type === 'convertTask') {
         void this.applyTaskConversion(document, panel, message.taskId, message.targetType);
@@ -463,6 +522,145 @@ class FluigProcessEditorProvider {
     }
   }
 
+  /**
+   * Mantem a identidade interna e os arquivos vinculados sincronizados quando
+   * o usuario renomeia um .process pelo Explorer do VS Code.
+   * @param {vscode.FileWillRenameEvent} event
+   */
+  async provideExternalProcessRenameEdits(event) {
+    try {
+      const edit = new vscode.WorkspaceEdit();
+      let changed = false;
+      const eventRenames = new Map(event.files.map((file) => [
+        normalizeUriKey(file.oldUri),
+        normalizeUriKey(file.newUri)
+      ]));
+
+      for (const file of event.files) {
+        if (!isProcessFileRename(file.oldUri, file.newUri)) continue;
+        const renameKey = processRenameKey(file.oldUri, file.newUri);
+        if (this.internalProcessRenames.has(renameKey)) continue;
+
+        const document = vscode.workspace.textDocuments.find((item) => item.uri.toString() === file.oldUri.toString())
+          ?? await vscode.workspace.openTextDocument(file.oldUri);
+        const model = parseProcess(document.getText());
+        if (!model.supported || !model.process) {
+          throw new Error(`${path.basename(file.oldUri.fsPath)} nao e um processo Studio XMI suportado.`);
+        }
+        const requestedCode = processCodeFromFilePath(file.newUri.fsPath);
+        assertDistinctProcessCode(model.process.id, requestedCode);
+        const identity = patchProcessIdentity(document.getText(), model.process.id, requestedCode);
+        const related = await this.discoverRelatedArtifactRenames(file.oldUri, model.process.id, requestedCode);
+        const automatic = [];
+        for (const rename of related) {
+          const explicitlyRenamedTo = eventRenames.get(normalizeUriKey(rename.oldUri));
+          if (explicitlyRenamedTo) {
+            if (explicitlyRenamedTo !== normalizeUriKey(rename.newUri)) {
+              throw new Error(`O arquivo ${path.basename(rename.oldUri.fsPath)} esta sendo renomeado para um nome incompatível com o novo codigo.`);
+            }
+            continue;
+          }
+          automatic.push(rename);
+        }
+        await this.assertRenameTargetsAvailable(automatic);
+        await this.backupService.ensureBackup(vscode, document);
+        for (const patch of identity.patches) {
+          edit.replace(
+            file.oldUri,
+            new vscode.Range(document.positionAt(patch.start), document.positionAt(patch.end)),
+            patch.value
+          );
+        }
+        for (const rename of automatic) {
+          edit.renameFile(rename.oldUri, rename.newUri, { overwrite: false, ignoreIfExists: false });
+        }
+        this.externalProcessRenameSummaries ??= new Map();
+        this.externalProcessRenameSummaries.set(renameKey, {
+          oldCode: model.process.id,
+          newCode: requestedCode,
+          relatedCount: related.length
+        });
+        changed = changed || identity.changed || automatic.length > 0;
+      }
+      return changed ? edit : undefined;
+    } catch (error) {
+      void vscode.window.showErrorMessage(`Fluig BPMN: renomeacao do processo recusada: ${error.message}`);
+      throw error;
+    }
+  }
+
+  /** @param {vscode.FileRenameEvent} event */
+  handleCompletedProcessRenames(event) {
+    for (const file of event.files) {
+      if (!isProcessFileRename(file.oldUri, file.newUri)) continue;
+      const oldKey = file.oldUri.toString();
+      this.documents.delete(oldKey);
+      this.pendingProcessRenames.delete(oldKey);
+      this.processSaveRefactors.delete(oldKey);
+      const renamedDocument = vscode.workspace.textDocuments.find((item) => item.uri.toString() === file.newUri.toString());
+      if (renamedDocument) this.documents.set(file.newUri.toString(), renamedDocument);
+      this.backupService.forget(file.oldUri);
+      const summary = this.externalProcessRenameSummaries?.get(processRenameKey(file.oldUri, file.newUri));
+      if (summary) {
+        this.externalProcessRenameSummaries.delete(processRenameKey(file.oldUri, file.newUri));
+        void vscode.window.showInformationMessage(
+          `Fluig BPMN: processo ${summary.oldCode} renomeado para ${summary.newCode}; ${summary.relatedCount} arquivo(s) vinculado(s) sincronizado(s).`
+        );
+      }
+    }
+  }
+
+  async discoverRelatedArtifactRenames(processUri, currentCode, requestedCode) {
+    if (!projectRootForProcessPath(processUri.fsPath)) {
+      throw new Error('O processo deve permanecer em workflow/diagrams para renomear scripts e literais com seguranca.');
+    }
+    const workflowUri = vscode.Uri.joinPath(processUri, '..', '..');
+    const definitions = [
+      { kind: 'scripts', directory: vscode.Uri.joinPath(workflowUri, 'scripts') },
+      { kind: 'literals', directory: vscode.Uri.joinPath(workflowUri, 'literals') },
+      { kind: 'resources', directory: vscode.Uri.joinPath(workflowUri, '.resources') }
+    ];
+    const renames = [];
+    for (const definition of definitions) {
+      let entries;
+      try {
+        entries = await vscode.workspace.fs.readDirectory(definition.directory);
+      } catch (error) {
+        if (isFileNotFound(error)) continue;
+        throw error;
+      }
+      for (const [fileName, type] of entries) {
+        if ((type & vscode.FileType.File) === 0) continue;
+        const targetName = renamedArtifactName(definition.kind, fileName, currentCode, requestedCode);
+        if (!targetName) continue;
+        renames.push({
+          kind: definition.kind,
+          oldUri: vscode.Uri.joinPath(definition.directory, fileName),
+          newUri: vscode.Uri.joinPath(definition.directory, targetName)
+        });
+      }
+    }
+    return renames;
+  }
+
+  async assertRenameTargetsAvailable(renames) {
+    const destinations = new Set();
+    for (const rename of renames) {
+      const destination = normalizeUriKey(rename.newUri);
+      if (destinations.has(destination)) {
+        throw new Error(`Mais de um arquivo produziria o mesmo destino: ${path.basename(rename.newUri.fsPath)}.`);
+      }
+      destinations.add(destination);
+      if (normalizeUriKey(rename.oldUri) === destination) continue;
+      try {
+        await vscode.workspace.fs.stat(rename.newUri);
+        throw new Error(`O arquivo de destino ja existe: ${rename.newUri.fsPath}`);
+      } catch (error) {
+        if (!isFileNotFound(error)) throw error;
+      }
+    }
+  }
+
   /** @param {vscode.TextDocument} document @param {vscode.WebviewPanel} panel */
   async applyProcessGeneralChanges(document, panel, elementId, configuration) {
     try {
@@ -482,6 +680,10 @@ class FluigProcessEditorProvider {
         void panel.webview.postMessage({ type: 'toast', message: 'As propriedades gerais já estão atualizadas.' });
         return;
       }
+      if (result.model.process.id !== elementId) {
+        await this.applyControlledProcessRename(document, panel, elementId, result);
+        return;
+      }
       await this.backupService.ensureBackup(vscode, document);
       const edit = new vscode.WorkspaceEdit();
       for (const patch of result.patches) {
@@ -499,6 +701,167 @@ class FluigProcessEditorProvider {
       void panel.webview.postMessage({ type: 'toast', message });
       void panel.webview.postMessage({ type: 'processGeneralComplete', elementId });
       void panel.webview.postMessage({ type: 'reloadModel' });
+    }
+  }
+
+  async applyControlledProcessRename(document, panel, currentCode, result) {
+    const requestedCode = assertDistinctProcessCode(currentCode, result.model.process.id);
+    if (!projectRootForProcessPath(document.uri.fsPath)) {
+      throw new Error('O processo deve estar em workflow/diagrams para uma renomeacao controlada.');
+    }
+    const fileCode = processCodeFromFilePath(document.uri.fsPath);
+    assertDistinctProcessCode(fileCode, requestedCode);
+    const processTarget = vscode.Uri.joinPath(document.uri, '..', `${requestedCode}.process`);
+    const processFileChanges = fileCode === requestedCode
+      ? []
+      : [{ kind: 'process', oldUri: document.uri, newUri: processTarget }];
+    const related = await this.discoverRelatedArtifactRenames(document.uri, fileCode, requestedCode);
+    await this.assertRenameTargetsAvailable([...processFileChanges, ...related]);
+
+    const preview = [...processFileChanges, ...related]
+      .slice(0, 12)
+      .map((rename) => `${path.basename(rename.oldUri.fsPath)} -> ${path.basename(rename.newUri.fsPath)}`);
+    if (processFileChanges.length + related.length > preview.length) {
+      preview.push(`... e mais ${(processFileChanges.length + related.length) - preview.length} arquivo(s).`);
+    }
+    if (processFileChanges.length) {
+      const confirmed = await vscode.window.showWarningMessage(
+        `Alterar o codigo do processo ${fileCode} para ${requestedCode}?`,
+        {
+          modal: true,
+          detail: [
+            'A alteracao sera aplicada ao documento agora. Ao salvar, o arquivo .process, scripts, literais e artefatos gerados vinculados serao renomeados.',
+            ...preview
+          ].join('\n')
+        },
+        'Aplicar alteracao'
+      );
+      if (confirmed !== 'Aplicar alteracao') {
+        void panel.webview.postMessage({ type: 'processGeneralComplete', elementId: currentCode });
+        void panel.webview.postMessage({ type: 'reloadModel' });
+        return;
+      }
+    }
+
+    await this.backupService.ensureBackup(vscode, document);
+    const edit = new vscode.WorkspaceEdit();
+    for (const patch of result.patches) {
+      edit.replace(
+        document.uri,
+        new vscode.Range(document.positionAt(patch.start), document.positionAt(patch.end)),
+        patch.value
+      );
+    }
+    if (!await vscode.workspace.applyEdit(edit)) {
+      throw new Error('O VS Code recusou a alteracao do codigo no documento.');
+    }
+    const documentKey = document.uri.toString();
+    if (processFileChanges.length) {
+      this.pendingProcessRenames.set(documentKey, {
+        oldCode: fileCode,
+        newCode: requestedCode,
+        relatedCount: related.length
+      });
+    } else {
+      this.pendingProcessRenames.delete(documentKey);
+    }
+    void panel.webview.postMessage({ type: 'processGeneralComplete', elementId: requestedCode });
+    void panel.webview.postMessage({
+      type: 'toast',
+      message: processFileChanges.length
+        ? `Codigo alterado para ${requestedCode}. Salve o .process para concluir a refatoracao de ${related.length} arquivo(s) vinculado(s).`
+        : `Codigo interno restaurado para ${requestedCode}.`
+    });
+  }
+
+  /**
+   * Conclui a refatoracao fisica somente depois que o usuario salva o .process.
+   * @param {vscode.TextDocument} document
+   */
+  async refactorSavedProcessIdentity(document) {
+    if (path.extname(document.uri.fsPath).toLowerCase() !== '.process') {
+      return;
+    }
+    const documentKey = document.uri.toString();
+    if (this.processSaveRefactors.has(documentKey)) {
+      return;
+    }
+
+    let model;
+    try {
+      model = parseProcess(document.getText());
+    } catch {
+      return;
+    }
+    if (!model.supported || !model.process) {
+      return;
+    }
+
+    let fileCode;
+    try {
+      fileCode = processCodeFromFilePath(document.uri.fsPath);
+    } catch {
+      return;
+    }
+    const requestedCode = model.process.id;
+    if (fileCode === requestedCode) {
+      this.pendingProcessRenames.delete(documentKey);
+      return;
+    }
+
+    this.processSaveRefactors.add(documentKey);
+    let renameKey = '';
+    try {
+      assertDistinctProcessCode(fileCode, requestedCode);
+      if (!projectRootForProcessPath(document.uri.fsPath)) {
+        throw new Error('O processo deve estar em workflow/diagrams para concluir a refatoracao.');
+      }
+      const processTarget = vscode.Uri.joinPath(document.uri, '..', `${requestedCode}.process`);
+      const related = await this.discoverRelatedArtifactRenames(document.uri, fileCode, requestedCode);
+      const processFileChange = { kind: 'process', oldUri: document.uri, newUri: processTarget };
+      await this.assertRenameTargetsAvailable([processFileChange, ...related]);
+
+      const approved = this.pendingProcessRenames.get(documentKey);
+      if (!approved || approved.oldCode !== fileCode || approved.newCode !== requestedCode) {
+        const confirmed = await vscode.window.showWarningMessage(
+          `O codigo interno foi alterado para ${requestedCode}. Refatorar os arquivos vinculados agora?`,
+          { modal: true, detail: `O arquivo ${path.basename(document.uri.fsPath)} sera renomeado junto com ${related.length} arquivo(s) vinculado(s).` },
+          'Refatorar arquivos'
+        );
+        if (confirmed !== 'Refatorar arquivos') {
+          void vscode.window.showWarningMessage(
+            `Fluig BPMN: o codigo interno ${requestedCode} ficou diferente do arquivo ${path.basename(document.uri.fsPath)}.`
+          );
+          return;
+        }
+      }
+
+      const edit = new vscode.WorkspaceEdit();
+      for (const rename of related) {
+        edit.renameFile(rename.oldUri, rename.newUri, { overwrite: false, ignoreIfExists: false });
+      }
+      renameKey = processRenameKey(document.uri, processTarget);
+      this.internalProcessRenames.add(renameKey);
+      this.externalProcessRenameSummaries.set(renameKey, {
+        oldCode: fileCode,
+        newCode: requestedCode,
+        relatedCount: related.length
+      });
+      edit.renameFile(document.uri, processTarget, { overwrite: false, ignoreIfExists: false });
+      if (!await vscode.workspace.applyEdit(edit)) {
+        throw new Error('O VS Code recusou a refatoracao dos arquivos vinculados. Nenhum arquivo foi sobrescrito.');
+      }
+      this.pendingProcessRenames.delete(documentKey);
+    } catch (error) {
+      if (renameKey) {
+        this.externalProcessRenameSummaries.delete(renameKey);
+      }
+      void vscode.window.showErrorMessage(`Fluig BPMN: refatoracao ao salvar recusada: ${error.message}`);
+    } finally {
+      this.processSaveRefactors.delete(documentKey);
+      if (renameKey) {
+        setTimeout(() => this.internalProcessRenames.delete(renameKey), 0);
+      }
     }
   }
 
@@ -993,7 +1356,8 @@ class FluigProcessEditorProvider {
    */
   async applyConnectionCreation(document, panel, connection) {
     try {
-      const result = createSequenceFlow(document.getText(), connection);
+      const templateText = await this.loadCreationTemplateText();
+      const result = createSequenceFlow(document.getText(), { ...connection, templateText });
       await this.backupService.ensureBackup(vscode, document);
       const edit = new vscode.WorkspaceEdit();
       for (const patch of result.patches) {
@@ -1006,7 +1370,9 @@ class FluigProcessEditorProvider {
       if (!await vscode.workspace.applyEdit(edit)) throw new Error('O VS Code recusou a criação do fluxo.');
       void panel.webview.postMessage({
         type: 'toast',
-        message: `Fluxo ${result.flowId} criado e validado.`
+        message: result.documentaryAssociation
+          ? `Associação visual ${result.flowId} criada e validada.`
+          : `Fluxo ${result.flowId} criado e validado.`
       });
     } catch (error) {
       const message = `Criação do fluxo recusada: ${error.message}`;
@@ -1514,7 +1880,8 @@ class FluigProcessEditorProvider {
 
   /**
    * Exclui um evento de início, final ou intermediário e seus fluxos incidentes comuns.
-   * Referências prováveis por id/WKNumState nos scripts do projeto bloqueiam a operação.
+   * O script pertencente a um evento condicional é removido junto; referências
+   * nos demais scripts e formulários continuam bloqueando a operação.
    * @param {vscode.TextDocument} document
    * @param {vscode.WebviewPanel} panel
    * @param {string} elementId
@@ -1522,7 +1889,11 @@ class FluigProcessEditorProvider {
   async applyIsolatedEventDeletion(document, panel, elementId) {
     try {
       const preview = deleteIsolatedEvent(document.getText(), elementId);
-      const references = await this.findProjectNodeReferences(document, preview.elementId, preview.activityCode);
+      const linkedScript = await this.resolveConditionalEventScript(document, preview.elementId);
+      const references = this.referencesOutsideLinkedScript(
+        await this.findProjectNodeReferences(document, preview.elementId, preview.activityCode),
+        linkedScript
+      );
       if (references.length) {
         const locations = references.slice(0, 6).map((item) => `${item.relativePath}:${item.line}`).join(', ');
         throw new Error(`O código/WKNumState ${preview.activityCode} possui referência provável em ${locations}. Revise-a antes de excluir o evento.`);
@@ -1536,11 +1907,17 @@ class FluigProcessEditorProvider {
       const flowDetail = removedFlows.length
         ? `\nFluxos removidos junto: ${removedFlows.join(', ')}`
         : '\nO evento não possui fluxos.';
+      const scriptDetail = linkedScript?.exists
+        ? `\nScript vinculado removido junto: ${linkedScript.relativePath}`
+        : (linkedScript ? `\nScript vinculado já ausente: ${linkedScript.relativePath}` : '');
+      const removalDetail = linkedScript
+        ? 'O elemento lógico, o shape visual, os fluxos incidentes e o script condicional vinculado serão removidos em uma única operação.'
+        : 'O elemento lógico, o shape visual e os fluxos incidentes serão removidos em uma única operação.';
       const confirmed = await vscode.window.showWarningMessage(
         `Excluir o evento ${preview.elementId}?`,
         {
           modal: true,
-          detail: `Tipo: ${label}\nCódigo/WKNumState: ${preview.activityCode}${flowDetail}\n\nO elemento lógico, o shape visual e os fluxos incidentes listados serão removidos atomicamente. Scripts não serão apagados. Um backup será criado antes da alteração.`
+          detail: `Tipo: ${label}\nCódigo/WKNumState: ${preview.activityCode}${flowDetail}${scriptDetail}\n\n${removalDetail} Backups serão criados antes da alteração.`
         },
         'Excluir evento'
       );
@@ -1549,7 +1926,14 @@ class FluigProcessEditorProvider {
         return;
       }
 
-      const currentReferences = await this.findProjectNodeReferences(document, preview.elementId, preview.activityCode);
+      const currentLinkedScript = await this.resolveConditionalEventScript(document, preview.elementId);
+      if (!sameLinkedScript(linkedScript, currentLinkedScript)) {
+        throw new Error('O script vinculado ao evento mudou enquanto a confirmação estava aberta. Tente novamente.');
+      }
+      const currentReferences = this.referencesOutsideLinkedScript(
+        await this.findProjectNodeReferences(document, preview.elementId, preview.activityCode),
+        currentLinkedScript
+      );
       if (currentReferences.length) throw new Error('Uma referência ao evento surgiu enquanto a confirmação estava aberta. Tente novamente.');
       const result = deleteIsolatedEvent(document.getText(), elementId);
       if (result.elementTag !== preview.elementTag
@@ -1558,6 +1942,9 @@ class FluigProcessEditorProvider {
         throw new Error('O evento mudou enquanto a confirmação estava aberta. Tente novamente.');
       }
       await this.backupService.ensureBackup(vscode, document);
+      if (currentLinkedScript?.exists) {
+        await this.backupService.createRelatedFileBackup(vscode, document, currentLinkedScript.uri);
+      }
       const edit = new vscode.WorkspaceEdit();
       for (const patch of result.patches) {
         edit.replace(
@@ -1566,10 +1953,13 @@ class FluigProcessEditorProvider {
           patch.value
         );
       }
+      if (currentLinkedScript?.exists) {
+        edit.deleteFile(currentLinkedScript.uri, { ignoreIfNotExists: false, recursive: false });
+      }
       if (!await vscode.workspace.applyEdit(edit)) throw new Error('O VS Code recusou a exclusão do evento.');
       void panel.webview.postMessage({
         type: 'toast',
-        message: `Evento ${result.elementId} e ${result.removedFlowIds?.length ?? 0} fluxo(s) excluídos; estrutura validada.`
+        message: `Evento ${result.elementId}, ${result.removedFlowIds?.length ?? 0} fluxo(s)${currentLinkedScript?.exists ? ' e o script vinculado' : ''} excluídos; estrutura validada.`
       });
     } catch (error) {
       const message = `Exclusão do evento recusada: ${error.message}`;
@@ -1707,8 +2097,9 @@ class FluigProcessEditorProvider {
   }
 
   /**
-   * Exclui uma atividade sem script ou evento anexado e seus fluxos incidentes comuns.
-   * Referências por id/WKNumState e nomes de arquivos do projeto bloqueiam a operação.
+   * Exclui uma atividade sem evento anexado e seus fluxos incidentes comuns.
+   * O script pertencente à própria atividade é removido junto; referências externas
+   * por id/WKNumState nos demais arquivos continuam bloqueando a operação.
    * @param {vscode.TextDocument} document
    * @param {vscode.WebviewPanel} panel
    * @param {string} elementId
@@ -1716,7 +2107,11 @@ class FluigProcessEditorProvider {
   async applyIsolatedTaskDeletion(document, panel, elementId) {
     try {
       const preview = deleteIsolatedTask(document.getText(), elementId);
-      const references = await this.findProjectNodeReferences(document, preview.elementId, preview.activityCode);
+      const linkedScript = await this.resolveTaskScript(document, preview.elementId);
+      const references = this.referencesOutsideLinkedScripts(
+        await this.findProjectNodeReferences(document, preview.elementId, preview.activityCode),
+        linkedScript ? [linkedScript] : []
+      );
       if (references.length) {
         const locations = references.slice(0, 6).map((item) => `${item.relativePath}:${item.line}`).join(', ');
         throw new Error(`O código/WKNumState ${preview.activityCode} possui referência provável em ${locations}. Revise-a antes de excluir a atividade.`);
@@ -1734,11 +2129,14 @@ class FluigProcessEditorProvider {
       const flowDetail = removedFlows.length
         ? `\nFluxos removidos junto: ${removedFlows.join(', ')}`
         : '\nA atividade não possui fluxos.';
+      const scriptDetail = linkedScript?.exists
+        ? `\nScript vinculado removido junto: ${linkedScript.relativePath}`
+        : (linkedScript ? `\nScript vinculado já ausente: ${linkedScript.relativePath}` : '');
       const confirmed = await vscode.window.showWarningMessage(
         `Excluir a atividade ${preview.elementId}?`,
         {
           modal: true,
-          detail: `Tipo: ${taskLabel}\nCódigo/WKNumState: ${preview.activityCode}${flowDetail}\n\nO elemento lógico, o shape visual e os fluxos incidentes listados serão removidos atomicamente. Eventos anexados e arquivos JavaScript permanecem bloqueados. Um backup será criado antes da alteração.`
+          detail: `Tipo: ${taskLabel}\nCódigo/WKNumState: ${preview.activityCode}${flowDetail}${scriptDetail}\n\nO elemento lógico, o shape visual, os fluxos incidentes e o script vinculado serão removidos atomicamente. Eventos anexados permanecem bloqueados. Backups serão criados antes da alteração.`
         },
         'Excluir atividade'
       );
@@ -1747,7 +2145,14 @@ class FluigProcessEditorProvider {
         return;
       }
 
-      const currentReferences = await this.findProjectNodeReferences(document, preview.elementId, preview.activityCode);
+      const currentLinkedScript = await this.resolveTaskScript(document, preview.elementId);
+      if (!sameLinkedScript(linkedScript, currentLinkedScript)) {
+        throw new Error('O script vinculado à atividade mudou enquanto a confirmação estava aberta. Tente novamente.');
+      }
+      const currentReferences = this.referencesOutsideLinkedScripts(
+        await this.findProjectNodeReferences(document, preview.elementId, preview.activityCode),
+        currentLinkedScript ? [currentLinkedScript] : []
+      );
       if (currentReferences.length) throw new Error('Uma referência à atividade surgiu enquanto a confirmação estava aberta. Tente novamente.');
       const result = deleteIsolatedTask(document.getText(), elementId);
       if (result.elementType !== preview.elementType
@@ -1756,6 +2161,9 @@ class FluigProcessEditorProvider {
         throw new Error('A atividade mudou enquanto a confirmação estava aberta. Tente novamente.');
       }
       await this.backupService.ensureBackup(vscode, document);
+      if (currentLinkedScript?.exists) {
+        await this.backupService.createRelatedFileBackup(vscode, document, currentLinkedScript.uri);
+      }
       const edit = new vscode.WorkspaceEdit();
       for (const patch of result.patches) {
         edit.replace(
@@ -1764,10 +2172,13 @@ class FluigProcessEditorProvider {
           patch.value
         );
       }
+      if (currentLinkedScript?.exists) {
+        edit.deleteFile(currentLinkedScript.uri, { ignoreIfNotExists: false, recursive: false });
+      }
       if (!await vscode.workspace.applyEdit(edit)) throw new Error('O VS Code recusou a exclusão da atividade.');
       void panel.webview.postMessage({
         type: 'toast',
-        message: `Atividade ${result.elementId} e ${result.removedFlowIds?.length ?? 0} fluxo(s) excluídos; estrutura validada.`
+        message: `Atividade ${result.elementId}, ${result.removedFlowIds?.length ?? 0} fluxo(s)${currentLinkedScript?.exists ? ' e o script vinculado' : ''} excluídos; estrutura validada.`
       });
     } catch (error) {
       const message = `Exclusão da atividade recusada: ${error.message}`;
@@ -1874,11 +2285,14 @@ class FluigProcessEditorProvider {
           : (preview.elementTag === 'BpmnGroup'
             ? '\nElementos dentro ou sobrepostos ao grupo serão preservados.'
             : ''));
+      const flowDetail = preview.removedFlowIds?.length
+        ? `\nAssociações visuais removidas junto: ${preview.removedFlowIds.join(', ')}.`
+        : '\nO artefato não possui associações visuais.';
       const confirmed = await vscode.window.showWarningMessage(
         `Excluir ${metadata.noun} ${preview.elementId}?`,
         {
           modal: true,
-          detail: `Nome: ${preview.elementName || '(sem nome)'}\nCódigo do elemento: ${preview.activityCode}${resourceDetail}\n\nSomente o objeto lógico e seu shape visual serão removidos. Fluxos, scripts, formulários e recursos externos não serão excluídos. Um backup será criado antes da alteração.`
+          detail: `Nome: ${preview.elementName || '(sem nome)'}\nCódigo do elemento: ${preview.activityCode}${resourceDetail}${flowDetail}\n\nO objeto lógico, seu shape visual e suas associações serão removidos. Scripts, formulários e recursos externos não serão excluídos. Um backup será criado antes da alteração.`
         },
         metadata.action
       );
@@ -1892,7 +2306,8 @@ class FluigProcessEditorProvider {
       const result = deleteIsolatedArtifact(document.getText(), elementId);
       if (result.elementTag !== preview.elementTag
         || result.removedChildIndex !== preview.removedChildIndex
-        || result.documentId !== preview.documentId) {
+        || result.documentId !== preview.documentId
+        || JSON.stringify(result.removedFlowIds ?? []) !== JSON.stringify(preview.removedFlowIds ?? [])) {
         throw new Error(`O ${metadata.noun} mudou enquanto a confirmação estava aberta. Tente novamente.`);
       }
       await this.backupService.ensureBackup(vscode, document);
@@ -1916,6 +2331,162 @@ class FluigProcessEditorProvider {
       void panel.webview.postMessage({ type: 'elementDeletionCancelled' });
       void panel.webview.postMessage({ type: 'reloadModel' });
     }
+  }
+
+  /** Exclui uma pool ou raia preservando os elementos posicionados sobre ela. */
+  async applyDiagramContainerDeletion(document, panel, elementId) {
+    try {
+      const originalText = document.getText();
+      const preview = deleteDiagramContainer(originalText, elementId);
+      const isPool = preview.elementTag === 'BpmnPool';
+      const noun = isPool ? 'pool' : 'raia';
+      const nestedDetail = preview.removedNestedLaneIds.length
+        ? `\nRaias internas removidas junto: ${preview.removedNestedLaneIds.join(', ')}.`
+        : '';
+      const action = isPool ? 'Excluir pool' : 'Excluir raia';
+      const confirmed = await vscode.window.showWarningMessage(
+        `Excluir ${noun} ${preview.elementId}?`,
+        {
+          modal: true,
+          detail: `Nome: ${preview.elementName || '(sem nome)'}${nestedDetail}\n\nSomente o container visual e sua definicao serao removidos. Atividades, eventos, gateways e fluxos serao preservados. As raias restantes serao repartidas igualmente. Um backup sera criado antes da alteracao.`
+        },
+        action
+      );
+      if (confirmed !== action) {
+        void panel.webview.postMessage({ type: 'elementDeletionCancelled' });
+        return;
+      }
+      if (document.getText() !== originalText) {
+        throw new Error('O processo mudou enquanto a confirmacao estava aberta. Tente novamente.');
+      }
+      const result = deleteDiagramContainer(document.getText(), elementId);
+      if (result.elementTag !== preview.elementTag
+        || result.parentPoolId !== preview.parentPoolId
+        || JSON.stringify(result.removedContainerIds) !== JSON.stringify(preview.removedContainerIds)) {
+        throw new Error(`A ${noun} mudou enquanto a confirmacao estava aberta. Tente novamente.`);
+      }
+      await this.backupService.ensureBackup(vscode, document);
+      const edit = new vscode.WorkspaceEdit();
+      for (const patch of result.patches) {
+        edit.replace(
+          document.uri,
+          new vscode.Range(document.positionAt(patch.start), document.positionAt(patch.end)),
+          patch.value
+        );
+      }
+      if (!await vscode.workspace.applyEdit(edit)) throw new Error(`O VS Code recusou a exclusao da ${noun}.`);
+      void panel.webview.postMessage({
+        type: 'toast',
+        message: `${isPool ? 'Pool' : 'Raia'} ${result.elementId} excluida; atividades e fluxos preservados.`
+      });
+    } catch (error) {
+      const message = `Exclusao do container recusada: ${error.message}`;
+      void vscode.window.showErrorMessage(`Fluig BPMN: ${message}`);
+      void panel.webview.postMessage({ type: 'toast', message });
+      void panel.webview.postMessage({ type: 'elementDeletionCancelled' });
+      void panel.webview.postMessage({ type: 'reloadModel' });
+    }
+  }
+
+  /** Exclui em uma única operação os elementos selecionados e seus fluxos incidentes. */
+  async applyMultipleElementDeletion(document, panel, elementIds) {
+    try {
+      const originalText = document.getText();
+      const preview = deleteDiagramElements(originalText, elementIds);
+      const selectedIds = new Set(preview.elementIds);
+      const initialModel = parseProcess(originalText);
+      const referenceSensitiveTags = new Set([
+        'BpmnTask', 'BpmnSubProcess', 'BpmnGateway',
+        'BpmnStartEvent', 'BpmnEndEvent', 'BpmnIntermediateEvent'
+      ]);
+      const selectedNodes = initialModel.elements.filter((item) => (
+        selectedIds.has(item.id) && referenceSensitiveTags.has(item.tag)
+      ));
+      const linkedScripts = await this.resolveLinkedScriptsForElementIds(document, preview.elementIds);
+      const externalReferences = [];
+      for (const element of selectedNodes) {
+        const activityCode = String(element.id).match(/(\d+)$/)?.[1] ?? '';
+        const references = this.referencesOutsideLinkedScripts(
+          await this.findProjectNodeReferences(document, element.id, activityCode),
+          linkedScripts
+        );
+        for (const reference of references) externalReferences.push({ ...reference, elementId: element.id });
+      }
+      if (externalReferences.length) {
+        const locations = externalReferences.slice(0, 8)
+          .map((item) => `${item.elementId} em ${item.relativePath}:${item.line}`)
+          .join(', ');
+        throw new Error(`Há referências externas prováveis: ${locations}. Revise-as antes de excluir a seleção.`);
+      }
+
+      const existingScripts = linkedScripts.filter((item) => item.exists);
+      const removedFlowCount = preview.removedFlowIds.length;
+      const confirmed = await vscode.window.showWarningMessage(
+        `Excluir ${preview.elementIds.length} elementos selecionados?`,
+        {
+          modal: true,
+          detail: `Elementos: ${preview.elementIds.join(', ')}\nFluxos incidentes removidos: ${removedFlowCount}\nScripts vinculados removidos: ${existingScripts.length}${existingScripts.length ? `\n${existingScripts.map((item) => item.relativePath).join('\n')}` : ''}\n\nA operação é atômica e cria backups antes de alterar o processo.`
+        },
+        'Excluir seleção'
+      );
+      if (confirmed !== 'Excluir seleção') {
+        void panel.webview.postMessage({ type: 'elementDeletionCancelled' });
+        return;
+      }
+
+      if (document.getText() !== originalText) {
+        throw new Error('O processo mudou enquanto a confirmação estava aberta. Tente novamente.');
+      }
+      const currentScripts = await this.resolveLinkedScriptsForElementIds(document, preview.elementIds);
+      if (!sameLinkedScripts(linkedScripts, currentScripts)) {
+        throw new Error('Um script vinculado mudou enquanto a confirmação estava aberta. Tente novamente.');
+      }
+      const result = deleteDiagramElements(document.getText(), elementIds);
+      await this.backupService.ensureBackup(vscode, document);
+      for (const script of currentScripts.filter((item) => item.exists)) {
+        await this.backupService.createRelatedFileBackup(vscode, document, script.uri);
+      }
+      const edit = new vscode.WorkspaceEdit();
+      edit.replace(
+        document.uri,
+        new vscode.Range(document.positionAt(0), document.positionAt(document.getText().length)),
+        result.text
+      );
+      for (const script of currentScripts.filter((item) => item.exists)) {
+        edit.deleteFile(script.uri, { ignoreIfNotExists: false, recursive: false });
+      }
+      if (!await vscode.workspace.applyEdit(edit)) throw new Error('O VS Code recusou a exclusão múltipla.');
+      void panel.webview.postMessage({
+        type: 'toast',
+        message: `${result.elementIds.length} elementos, ${result.removedFlowIds.length} fluxo(s) e ${existingScripts.length} script(s) excluídos; estrutura validada.`
+      });
+    } catch (error) {
+      const message = `Exclusão múltipla recusada: ${error.message}`;
+      void vscode.window.showErrorMessage(`Fluig BPMN: ${message}`);
+      void panel.webview.postMessage({ type: 'toast', message });
+      void panel.webview.postMessage({ type: 'elementDeletionCancelled' });
+      void panel.webview.postMessage({ type: 'reloadModel' });
+    }
+  }
+
+  /**
+   * @param {vscode.TextDocument} document
+   * @param {string[]} elementIds
+   */
+  async resolveLinkedScriptsForElementIds(document, elementIds) {
+    const requested = new Set(elementIds ?? []);
+    const model = parseProcess(document.getText());
+    const scripts = [];
+    for (const element of model.elements.filter((item) => requested.has(item.id))) {
+      let script = null;
+      if (element.tag === 'BpmnTask') script = await this.resolveTaskScript(document, element.id);
+      else if ((element.tag === 'BpmnStartEvent' && element.type === '13')
+        || (element.tag === 'BpmnIntermediateEvent' && element.type === '35')) {
+        script = await this.resolveConditionalEventScript(document, element.id);
+      }
+      if (script) scripts.push(script);
+    }
+    return [...new Map(scripts.map((item) => [item.uri.toString(), item])).values()];
   }
 
   /**
@@ -1959,6 +2530,82 @@ class FluigProcessEditorProvider {
       }
     }
     return findings;
+  }
+
+  /**
+   * Localiza com segurança o arquivo pertencente a um evento condicional.
+   * @param {vscode.TextDocument} document
+   * @param {string} elementId
+   */
+  async resolveConditionalEventScript(document, elementId) {
+    const model = parseProcess(document.getText());
+    const element = model.elements.find((item) => item.id === elementId);
+    const conditional = (element?.tag === 'BpmnStartEvent' && element.type === '13')
+      || (element?.tag === 'BpmnIntermediateEvent' && element.type === '35');
+    if (!conditional) return null;
+
+    const fileName = String(parseEventTriggerData(element.attributes.trigger).scriptCondition ?? '').trim();
+    if (!fileName) return null;
+    return this.resolveLinkedScriptFile(document, fileName, 'evento');
+  }
+
+  /**
+   * @param {vscode.TextDocument} document
+   * @param {string} elementId
+   */
+  async resolveTaskScript(document, elementId) {
+    const model = parseProcess(document.getText());
+    const element = model.elements.find((item) => item.id === elementId);
+    if (element?.tag !== 'BpmnTask') return null;
+    const fileName = String(element.attributes.scriptFileName ?? '').trim();
+    if (!fileName) return null;
+    return this.resolveLinkedScriptFile(document, fileName, 'atividade');
+  }
+
+  /**
+   * @param {vscode.TextDocument} document
+   * @param {string} fileName
+   * @param {string} ownerLabel
+   */
+  async resolveLinkedScriptFile(document, fileName, ownerLabel) {
+    if (path.basename(fileName) !== fileName || !/^[A-Za-z0-9._-]+\.js$/i.test(fileName)) {
+      throw new Error(`Referência de script da ${ownerLabel} insegura: ${fileName}.`);
+    }
+
+    const projectRoot = projectRootForProcessPath(document.uri.fsPath);
+    if (!projectRoot) throw new Error('Não foi possível localizar a raiz do projeto a partir de workflow/diagrams.');
+    const uri = vscode.Uri.joinPath(vscode.Uri.file(projectRoot), 'workflow', 'scripts', fileName);
+    const relativePath = vscode.workspace.asRelativePath(uri, false);
+    const openDocument = vscode.workspace.textDocuments.find((item) => item.uri.toString() === uri.toString());
+    if (openDocument?.isDirty) {
+      throw new Error(`Salve ou descarte as alterações pendentes em ${relativePath} antes de excluir a ${ownerLabel}.`);
+    }
+
+    try {
+      const bytes = await vscode.workspace.fs.readFile(uri);
+      return {
+        uri,
+        relativePath,
+        exists: true,
+        digest: crypto.createHash('sha256').update(bytes).digest('hex')
+      };
+    } catch (error) {
+      if (isFileNotFound(error)) return { uri, relativePath, exists: false, digest: '' };
+      throw new Error(`Não foi possível verificar o script vinculado ${relativePath}: ${error.message}`);
+    }
+  }
+
+  referencesOutsideLinkedScript(references, linkedScript) {
+    if (!linkedScript?.exists) return references;
+    const linkedUri = linkedScript.uri.toString();
+    return references.filter((item) => item.uri.toString() !== linkedUri);
+  }
+
+  referencesOutsideLinkedScripts(references, linkedScripts) {
+    const linkedUris = new Set((linkedScripts ?? [])
+      .filter((item) => item?.exists)
+      .map((item) => item.uri.toString()));
+    return references.filter((item) => !linkedUris.has(item.uri.toString()));
   }
 
   /**
@@ -2034,7 +2681,8 @@ class FluigProcessEditorProvider {
    */
   async applyConnectedTaskCreation(document, panel, task) {
     try {
-      const result = createConnectedTask(document.getText(), task);
+      const templateText = await this.loadCreationTemplateText();
+      const result = createConnectedTask(document.getText(), { ...task, templateText });
       await this.backupService.ensureBackup(vscode, document);
       const edit = new vscode.WorkspaceEdit();
       for (const patch of result.patches) {
@@ -2066,7 +2714,8 @@ class FluigProcessEditorProvider {
    */
   async applyConnectedGatewayCreation(document, panel, gateway) {
     try {
-      const result = createConnectedGateway(document.getText(), gateway);
+      const templateText = await this.loadCreationTemplateText();
+      const result = createConnectedGateway(document.getText(), { ...gateway, templateText });
       await this.backupService.ensureBackup(vscode, document);
       const edit = new vscode.WorkspaceEdit();
       for (const patch of result.patches) {
@@ -2098,7 +2747,8 @@ class FluigProcessEditorProvider {
    */
   async applyConnectedIntermediateEventCreation(document, panel, intermediateEvent) {
     try {
-      const result = createConnectedIntermediateEvent(document.getText(), intermediateEvent);
+      const templateText = await this.loadCreationTemplateText();
+      const result = createConnectedIntermediateEvent(document.getText(), { ...intermediateEvent, templateText });
       await this.backupService.ensureBackup(vscode, document);
       const edit = new vscode.WorkspaceEdit();
       for (const patch of result.patches) {
@@ -2130,7 +2780,8 @@ class FluigProcessEditorProvider {
    */
   async applyConnectedEndEventCreation(document, panel, endEvent) {
     try {
-      const result = createConnectedEndEvent(document.getText(), endEvent);
+      const templateText = await this.loadCreationTemplateText();
+      const result = createConnectedEndEvent(document.getText(), { ...endEvent, templateText });
       await this.backupService.ensureBackup(vscode, document);
       const edit = new vscode.WorkspaceEdit();
       for (const patch of result.patches) {
@@ -2156,25 +2807,44 @@ class FluigProcessEditorProvider {
 
   /** Cria uma pool vazia usando a estrutura Graphiti homologada no Eclipse. */
   async applyPoolCreation(document, panel, pool) {
-    await this.applyContainerCreation(document, panel, () => createPool(document.getText(), pool), 'pool');
+    const templateText = await this.loadCreationTemplateText();
+    await this.applyContainerCreation(
+      document,
+      panel,
+      () => createPool(document.getText(), { ...pool, templateText }),
+      'pool'
+    );
   }
 
   /** Cria uma raia independente ou redistribui as raias de uma pool existente. */
   async applySwimLaneCreation(document, panel, lane) {
-    await this.applyContainerCreation(document, panel, () => createSwimLane(document.getText(), lane), 'raia');
+    const templateText = await this.loadCreationTemplateText();
+    await this.applyContainerCreation(
+      document,
+      panel,
+      () => createSwimLane(document.getText(), { ...lane, templateText }),
+      'raia'
+    );
   }
 
   /** Cria um elemento isolado escolhido na paleta lateral. */
   async applyIsolatedNodeCreation(document, panel, node) {
-    await this.applyContainerCreation(document, panel, () => createIsolatedNode(document.getText(), node), 'elemento');
+    const templateText = await this.loadCreationTemplateText();
+    await this.applyContainerCreation(
+      document,
+      panel,
+      () => createIsolatedNode(document.getText(), { ...node, templateText }),
+      'elemento'
+    );
   }
 
   /** Cria uma captura de erro anexada exclusivamente a uma atividade de serviço automatizada. */
   async applyAttachedErrorEventCreation(document, panel, errorEvent) {
+    const templateText = await this.loadCreationTemplateText();
     await this.applyContainerCreation(
       document,
       panel,
-      () => createAttachedErrorEvent(document.getText(), errorEvent),
+      () => createAttachedErrorEvent(document.getText(), { ...errorEvent, templateText }),
       'captura de erro'
     );
   }
@@ -2204,6 +2874,39 @@ class FluigProcessEditorProvider {
       void panel.webview.postMessage({ type: 'reloadModel' });
     }
   }
+}
+
+function isProcessFileRename(oldUri, newUri) {
+  if (String(oldUri?.scheme ?? '') !== 'file' || String(newUri?.scheme ?? '') !== 'file') return false;
+  if (path.extname(oldUri.fsPath).toLowerCase() !== '.process' || path.extname(newUri.fsPath).toLowerCase() !== '.process') return false;
+  if (path.dirname(oldUri.fsPath).toLocaleLowerCase('en-US') !== path.dirname(newUri.fsPath).toLocaleLowerCase('en-US')) return false;
+  return path.basename(oldUri.fsPath) !== path.basename(newUri.fsPath);
+}
+
+function normalizeUriKey(uri) {
+  const value = String(uri?.fsPath ?? uri?.toString?.() ?? '');
+  return process.platform === 'win32' ? path.normalize(value).toLocaleLowerCase('en-US') : path.normalize(value);
+}
+
+function processRenameKey(oldUri, newUri) {
+  return `${normalizeUriKey(oldUri)}=>${normalizeUriKey(newUri)}`;
+}
+
+function isFileNotFound(error) {
+  return error?.code === 'FileNotFound' || error?.code === 'ENOENT';
+}
+
+function sameLinkedScript(left, right) {
+  if (!left || !right) return left === right;
+  return left.uri.toString() === right.uri.toString()
+    && left.exists === right.exists
+    && left.digest === right.digest;
+}
+
+function sameLinkedScripts(left, right) {
+  if ((left?.length ?? 0) !== (right?.length ?? 0)) return false;
+  const rightByUri = new Map((right ?? []).map((item) => [item.uri.toString(), item]));
+  return (left ?? []).every((item) => sameLinkedScript(item, rightByUri.get(item.uri.toString())));
 }
 
 module.exports = { FluigProcessEditorProvider };

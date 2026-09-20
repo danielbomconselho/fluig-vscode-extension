@@ -2,8 +2,13 @@ import * as path from "path";
 import * as vscode from "vscode";
 import { ServerService } from "./ServerService";
 import { UtilsService } from "./UtilsService";
+import { WorkflowProcessArtifactService } from "./WorkflowProcessArtifactService";
 
 const { FluigProcessExportService: fluigProcessExportService } = require("./FluigProcessExportService");
+const {
+    ecm30PathForProcess,
+    isWorkflowDiagramProcessPath,
+} = require("./workflowProcessPath");
 
 interface ExportChoice extends vscode.QuickPickItem {
     newProcess: boolean;
@@ -96,6 +101,9 @@ export class WorkflowProcessExportService {
         if (!selectedUri) {
             return;
         }
+        if (!isWorkflowDiagramProcessPath(selectedUri.fsPath)) {
+            throw new Error("O arquivo .process deve estar diretamente em workflow/diagrams.");
+        }
 
         const server = await ServerService.getSelect();
         if (!server) {
@@ -142,12 +150,9 @@ export class WorkflowProcessExportService {
 
         const processId = path.basename(selectedUri.fsPath, ".process");
         const diagramsFolder = path.dirname(selectedUri.fsPath);
-        if (path.basename(diagramsFolder).toLowerCase() !== "diagrams") {
-            throw new Error("O arquivo .process deve estar em workflow/diagrams.");
-        }
-
-        const resourcesFolder = path.resolve(diagramsFolder, "..", ".resources");
-        const ecm30Path = path.join(resourcesFolder, `${processId}.ecm30.xml`);
+        await WorkflowProcessArtifactService.ensureGenerated(selectedUri);
+        const ecm30Path = ecm30PathForProcess(selectedUri.fsPath);
+        const resourcesFolder = path.dirname(ecm30Path);
         const svgPath = path.join(resourcesFolder, `${processId}.processimage.svg`);
         await vscode.workspace.fs.stat(vscode.Uri.file(ecm30Path));
 
@@ -169,7 +174,12 @@ export class WorkflowProcessExportService {
     }
 
     private static resolveProcessUri(processUri?: vscode.Uri): vscode.Uri | undefined {
-        const selectedUri = processUri || vscode.window.activeTextEditor?.document.uri;
+        const activeTab = vscode.window.tabGroups.activeTabGroup.activeTab;
+        const tabInput = activeTab?.input;
+        const tabUri = tabInput instanceof vscode.TabInputText || tabInput instanceof vscode.TabInputCustom
+            ? tabInput.uri
+            : undefined;
+        const selectedUri = processUri || vscode.window.activeTextEditor?.document.uri || tabUri;
         if (!selectedUri || path.extname(selectedUri.fsPath).toLowerCase() !== ".process") {
             vscode.window.showErrorMessage("Selecione um arquivo .process.");
             return;

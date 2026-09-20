@@ -17,6 +17,10 @@ const {
     resolveJavaExecutable,
     writeEcm30Artifact,
 } = require("../src/services/Ecm30GenerationService");
+const {
+    ecm30PathForProcess,
+    isWorkflowDiagramProcessPath,
+} = require("../src/services/workflowProcessPath");
 
 function temporaryDirectory(t) {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "ecm30-generation-"));
@@ -30,6 +34,37 @@ function fakePlugins(directory) {
         fs.writeFileSync(path.join(directory, `${prefix}1.8.2.2.jar`), "jar");
     }
 }
+
+test("aceita somente processos diretamente em workflow/diagrams", () => {
+    assert.equal(
+        isWorkflowDiagramProcessPath(path.join("projeto", "workflow", "diagrams", "processo.process")),
+        true
+    );
+    assert.equal(
+        isWorkflowDiagramProcessPath(path.join("projeto", ".fluig-bpmn", "backups", "processo.process")),
+        false
+    );
+    assert.equal(
+        isWorkflowDiagramProcessPath(path.join("projeto", "test", "fixtures", "processo.process")),
+        false
+    );
+    assert.equal(
+        isWorkflowDiagramProcessPath(path.join("projeto", "workflow", "diagrams", "processo.txt")),
+        false
+    );
+});
+
+test("calcula o ECM30 correspondente sem aceitar arquivos de backup", () => {
+    const processPath = path.resolve("projeto", "workflow", "diagrams", "processo.process");
+    assert.equal(
+        ecm30PathForProcess(processPath),
+        path.resolve("projeto", "workflow", ".resources", "processo.ecm30.xml")
+    );
+    assert.throws(
+        () => ecm30PathForProcess(path.resolve("projeto", ".fluig-bpmn", "backups", "processo.process")),
+        /Expected process under workflow\/diagrams/
+    );
+});
 
 test("descobre a pasta plugins configurada ou no EclipsePortable", t => {
     const root = temporaryDirectory(t);

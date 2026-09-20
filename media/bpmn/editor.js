@@ -65,6 +65,10 @@
   const zoomResetButton = document.getElementById('zoomReset');
   const canvasBackgroundColorInput = document.getElementById('canvasBackgroundColor');
   const routeFlowsButton = document.getElementById('routeFlows');
+  const showErrorsButton = document.getElementById('showErrors');
+  const validationDialog = document.getElementById('validationDialog');
+  const validationDialogSummary = document.getElementById('validationDialogSummary');
+  const validationProblemList = document.getElementById('validationProblemList');
   const propertyFields = document.getElementById('propertyFields');
   const rawPropertyList = document.getElementById('rawPropertyList');
   const applyButton = document.getElementById('apply');
@@ -265,6 +269,11 @@
   canvasBackgroundColorInput.addEventListener('change', () => setCanvasBackground(canvasBackgroundColorInput.value));
   routeFlowsButton.addEventListener('click', adjustFlows);
   document.getElementById('generateTranslations').addEventListener('click', () => vscode.postMessage({ type: 'generateTranslations' }));
+  showErrorsButton.addEventListener('click', showValidationProblems);
+  document.getElementById('closeValidationDialog').addEventListener('click', () => validationDialog.close());
+  validationDialog.addEventListener('click', (event) => {
+    if (event.target === validationDialog) validationDialog.close();
+  });
   document.getElementById('validate').addEventListener('click', () => vscode.postMessage({ type: 'validate' }));
   document.getElementById('openText').addEventListener('click', () => vscode.postMessage({ type: 'openText' }));
   document.getElementById('search').addEventListener('input', filterDiagram);
@@ -308,6 +317,7 @@
 
   function renderModel(data) {
     if (state.routeAdjustment) state.routeAdjustment.cancelled = true;
+    if (validationDialog.open) validationDialog.close();
     closeTaskConversionMenu();
     closeTaskCreationMenu();
     cancelTaskPlacement(false);
@@ -318,6 +328,7 @@
     hydrateCachedRemoteFormFields(data);
     state.data = data;
     rebuildIndexes(data);
+    updateValidationProblemsButton(data);
     state.taskConversionPending = false;
     normalizeAttachedShapePositions();
     state.canvasWidth = 0;
@@ -606,12 +617,15 @@
       const permitsReturn = element?.attributes.permiteRetorno === 'true';
       const automatic = element?.attributes.fluxoAutomatico === 'true';
       const defaultLink = element?.attributes.defaultLink === 'true';
-      const flowClass = `flow${permitsReturn ? ' return-flow' : ''}${automatic ? ' automatic-flow' : ''}`;
-      const marker = automatic ? 'url(#arrowAutomatic)' : permitsReturn ? 'url(#arrowReturn)' : 'url(#arrow)';
+      const sourceElement = findElement(connection.sourceRef);
+      const documentaryAssociation = ['BpmnAnnotation', 'BpmnDatabase', 'BpmnDocument'].includes(sourceElement?.tag);
+      const flowClass = `flow${documentaryAssociation ? ' documentary-association' : ''}${permitsReturn ? ' return-flow' : ''}${automatic ? ' automatic-flow' : ''}`;
+      const marker = documentaryAssociation ? '' : (automatic ? 'url(#arrowAutomatic)' : permitsReturn ? 'url(#arrowReturn)' : 'url(#arrow)');
       const group = svg('g', { class: 'flow-group', 'data-id': connection.businessObject });
       const hitbox = svg('path', { d: hitboxData, class: 'flow-hitbox' });
-      const pathAttributes = { d: pathData, class: flowClass, id: `visual-${connection.businessObject}`, 'marker-end': marker };
-      if (permitsReturn) pathAttributes['marker-start'] = marker;
+      const pathAttributes = { d: pathData, class: flowClass, id: `visual-${connection.businessObject}` };
+      if (marker) pathAttributes['marker-end'] = marker;
+      if (permitsReturn && marker) pathAttributes['marker-start'] = marker;
       const path = svg('path', pathAttributes);
       group.append(path, hitbox);
       if (defaultLink) addDefaultFlowMarker(group, points, permitsReturn, automatic);
@@ -972,7 +986,7 @@
     event.preventDefault();
     event.stopPropagation();
     if (state.layoutCommitPending || state.isDragging) return;
-    selectElement(element.id);
+    if (!(state.selectedIds.length > 1 && state.selectedIds.includes(element.id))) selectElement(element.id);
     requestSelectedDeletion();
   }
 
@@ -1724,12 +1738,14 @@
 
   function canStartConnection(element) {
     return Boolean(element) && [
-      'BpmnStartEvent', 'BpmnTask', 'BpmnSubProcess', 'BpmnGateway', 'BpmnIntermediateEvent'
+      'BpmnStartEvent', 'BpmnTask', 'BpmnSubProcess', 'BpmnGateway', 'BpmnIntermediateEvent',
+      'BpmnAnnotation', 'BpmnDatabase', 'BpmnDocument'
     ].includes(element.tag);
   }
 
   function isContextPadDeletable(element) {
-    return isDeletableAttachedErrorEvent(element)
+    return isDeletableContainer(element)
+      || isDeletableAttachedErrorEvent(element)
       || isDeletableIsolatedTask(element)
       || isDeletableIsolatedSubProcess(element)
       || isDeletableIsolatedArtifact(element)
@@ -1739,7 +1755,15 @@
 
   function canReceiveConnection(sourceId, targetId) {
     if (!sourceId || !targetId || sourceId === targetId) return false;
+    const source = findElement(sourceId);
     const target = findElement(targetId);
+    const documentaryAssociation = ['BpmnAnnotation', 'BpmnDatabase', 'BpmnDocument'].includes(source?.tag);
+    if (documentaryAssociation) {
+      if (!target || !['BpmnTask', 'BpmnSubProcess'].includes(target.tag)) return false;
+      return !state.data.connections.some((connection) => (
+        connection.sourceRef === sourceId && connection.targetRef === targetId
+      ));
+    }
     if (!target || ![
       'BpmnTask', 'BpmnSubProcess', 'BpmnGateway', 'BpmnIntermediateEvent', 'BpmnEndEvent'
     ].includes(target.tag)) return false;
@@ -1758,8 +1782,10 @@
     selectElement(sourceId);
     event.currentTarget.setPointerCapture?.(event.pointerId);
     const preview = svg('path', {
-      class: 'connection-preview',
-      'marker-end': 'url(#arrow)'
+      class: ['BpmnAnnotation', 'BpmnDatabase', 'BpmnDocument'].includes(source.tag)
+        ? 'connection-preview documentary-association-preview'
+        : 'connection-preview',
+      ...(['BpmnAnnotation', 'BpmnDatabase', 'BpmnDocument'].includes(source.tag) ? {} : { 'marker-end': 'url(#arrow)' })
     });
     viewport.append(preview);
     state.connectionInteraction = {
@@ -1810,7 +1836,10 @@
       type: 'createConnection',
       connection: { sourceId, targetId, bendpoints }
     });
-    showToast('Gravando o novo fluxo no arquivo .process...');
+    const source = findElement(sourceId);
+    showToast(['BpmnAnnotation', 'BpmnDatabase', 'BpmnDocument'].includes(source?.tag)
+      ? 'Gravando a associação visual no arquivo .process...'
+      : 'Gravando o novo fluxo no arquivo .process...');
   }
 
   function cancelConnectionInteraction() {
@@ -2157,6 +2186,44 @@
       selected.add(id);
     }
     setSelection([...selected]);
+  }
+
+  function navigateToLinkedEvent(elementId) {
+    const target = findElement(elementId);
+    if (!target || target.tag !== 'BpmnIntermediateEvent' || String(target.type) !== '42' || !findShape(elementId)) {
+      showToast('O evento receptor de link selecionado nao esta disponivel no diagrama.');
+      return;
+    }
+
+    focusDiagramElement(elementId);
+  }
+
+  function focusDiagramElement(elementId) {
+    const target = findElement(elementId);
+    if (!target) {
+      showToast('O elemento selecionado não está disponível no diagrama.');
+      return false;
+    }
+    selectElement(elementId);
+    requestAnimationFrame(() => {
+      const visual = viewport.querySelector(`[data-id="${cssEscape(elementId)}"]`);
+      if (!visual) return;
+      const scrollerRect = canvasScroller.getBoundingClientRect();
+      const visualRect = visual.getBoundingClientRect();
+      const left = canvasScroller.scrollLeft
+        + visualRect.left + (visualRect.width / 2)
+        - scrollerRect.left - (canvasScroller.clientWidth / 2);
+      const top = canvasScroller.scrollTop
+        + visualRect.top + (visualRect.height / 2)
+        - scrollerRect.top - (canvasScroller.clientHeight / 2);
+      canvasScroller.scrollTo({
+        left: Math.max(0, left),
+        top: Math.max(0, top),
+        behavior: 'smooth'
+      });
+      visual.focus({ preventScroll: true });
+    });
+    return true;
   }
 
   function setSelection(ids, persist = true) {
@@ -3650,7 +3717,8 @@
     const canDeleteTask = isDeletableIsolatedTask(element);
     const canDeleteSubProcess = isDeletableIsolatedSubProcess(element);
     const canDeleteArtifact = isDeletableIsolatedArtifact(element);
-    deleteButton.classList.toggle('hidden', !canDeleteFlow && !canDeleteAttachedError && !canDeleteEvent && !canDeleteGateway && !canDeleteTask && !canDeleteSubProcess && !canDeleteArtifact);
+    const canDeleteContainer = isDeletableContainer(element);
+    deleteButton.classList.toggle('hidden', !canDeleteFlow && !canDeleteAttachedError && !canDeleteEvent && !canDeleteGateway && !canDeleteTask && !canDeleteSubProcess && !canDeleteArtifact && !canDeleteContainer);
     deleteButton.textContent = canDeleteFlow
       ? 'Excluir fluxo'
       : (canDeleteAttachedError
@@ -3659,7 +3727,11 @@
         ? 'Excluir atividade'
         : (canDeleteSubProcess
           ? 'Excluir subprocesso'
-          : (canDeleteArtifact ? artifactDeleteLabel(element) : (canDeleteGateway ? 'Excluir gateway' : 'Excluir evento')))));
+          : (canDeleteArtifact
+            ? artifactDeleteLabel(element)
+            : (canDeleteContainer
+              ? (element.tag === 'BpmnPool' ? 'Excluir pool' : 'Excluir raia')
+              : (canDeleteGateway ? 'Excluir gateway' : 'Excluir evento'))))));
     deleteButton.disabled = false;
     propertyFields.replaceChildren();
     state.formInitial = {};
@@ -3989,8 +4061,12 @@
         processStateBlock.append(warning);
       }
     }
+    const processCodeField = textField('Código', editor.code, 'process-general-code');
+    const processCodeHint = document.createElement('small');
+    processCodeHint.textContent = 'Ao aplicar, o código será atualizado no documento. Ao salvar, o .process, scripts, literais e artefatos vinculados serão renomeados.';
+    processCodeField.append(processCodeHint);
     section.append(
-      textField('Código', editor.code, 'process-general-code'),
+      processCodeField,
       selectField('Servidor', editor.serverId, editor.serverOptions, 'process-general-server', 'Selecione um servidor'),
       readOnlyField('Versão', editor.version, 'process-general-version'),
       textField('Descrição', editor.description, 'process-general-description'),
@@ -6878,7 +6954,8 @@
   }
 
   function requestSelectedDeletion() {
-    if (!state.data?.supported || state.layoutCommitPending || state.isDragging || state.selectedIds.length !== 1) return false;
+    if (!state.data?.supported || state.layoutCommitPending || state.isDragging || !state.selectedIds.length) return false;
+    if (state.selectedIds.length > 1) return requestMultipleElementDeletion();
     const element = findElement(state.selectedIds[0]);
     if (element?.tag === 'SequenceFlow') return requestSelectedFlowDeletion();
     if (isDeletableAttachedErrorEvent(element)) return requestSelectedAttachedErrorDeletion(element);
@@ -6887,7 +6964,47 @@
     if (isDeletableIsolatedArtifact(element)) return requestSelectedIsolatedArtifactDeletion(element);
     if (isDeletableIsolatedEvent(element)) return requestSelectedIsolatedEventDeletion(element);
     if (isDeletableIsolatedGateway(element)) return requestSelectedIsolatedGatewayDeletion(element);
+    if (isDeletableContainer(element)) return requestSelectedContainerDeletion(element);
     return false;
+  }
+
+  function requestMultipleElementDeletion() {
+    const elementIds = state.selectedIds.filter((id) => isSupportedMultipleDeletion(findElement(id)));
+    if (elementIds.length !== state.selectedIds.length) {
+      showToast('A seleção contém o processo ou outro elemento que não pode ser excluído em conjunto.');
+      return false;
+    }
+    state.layoutCommitPending = true;
+    deleteButton.disabled = true;
+    vscode.postMessage({ type: 'deleteMultipleElements', elementIds });
+    showToast(`Aguardando confirmação para excluir ${elementIds.length} elementos...`);
+    return true;
+  }
+
+  function isSupportedMultipleDeletion(element) {
+    if (!element) return false;
+    if (element.tag === 'SequenceFlow') return true;
+    if (element.tag === 'BpmnTask') return ['80', '81', '82', '84', '85', '86', '87'].includes(String(element.type));
+    if (element.tag === 'BpmnSubProcess') return ['100', '101'].includes(String(element.type));
+    if (element.tag === 'BpmnGateway') return ['120', '121', '126', '127'].includes(String(element.type));
+    if (element.tag === 'BpmnStartEvent') return ['10', '12', '13', '14', '16'].includes(String(element.type));
+    if (element.tag === 'BpmnEndEvent') return ['60', '63', '64', '65', '66', '68'].includes(String(element.type));
+    if (element.tag === 'BpmnIntermediateEvent') return ['30', '32', '35', '36', '37', '39', '41', '42', '43'].includes(String(element.type));
+    if (['BpmnPool', 'BpmnSwimLane'].includes(element.tag)) return true;
+    return ['BpmnAnnotation', 'BpmnDatabase', 'BpmnDocument', 'BpmnGroup'].includes(element.tag);
+  }
+
+  function requestSelectedContainerDeletion(element) {
+    if (!isDeletableContainer(element)) return false;
+    state.layoutCommitPending = true;
+    deleteButton.disabled = true;
+    vscode.postMessage({ type: 'deleteDiagramContainer', elementId: element.id });
+    showToast(`Aguardando confirmação para excluir ${element.id}...`);
+    return true;
+  }
+
+  function isDeletableContainer(element) {
+    return Boolean(element) && ['BpmnPool', 'BpmnSwimLane'].includes(element.tag);
   }
 
   function requestSelectedAttachedErrorDeletion(element) {
@@ -6966,8 +7083,7 @@
     if (!element || element.tag !== 'BpmnTask') return false;
     const allowedType = ['80', '81', '82', '84', '85', '86', '87'].includes(String(element.type));
     return allowedType
-      && !String(element.attributes?.attachedEvents ?? '').trim()
-      && !String(element.attributes?.scriptFileName ?? '').trim();
+      && !String(element.attributes?.attachedEvents ?? '').trim();
   }
 
   function requestSelectedIsolatedSubProcessDeletion(element) {
@@ -7000,9 +7116,9 @@
     const typedArtifact = ['BpmnAnnotation', 'BpmnDatabase', 'BpmnDocument'].includes(element.tag)
       && String(element.type) === '0';
     const visualGroup = element.tag === 'BpmnGroup' && !String(element.type ?? '');
-    return (typedArtifact || visualGroup)
+    return typedArtifact || (visualGroup
       && !String(element.attributes?.incoming ?? '').trim()
-      && !String(element.attributes?.outgoing ?? '').trim();
+      && !String(element.attributes?.outgoing ?? '').trim());
   }
 
   function artifactDeleteLabel(element) {
@@ -7046,7 +7162,27 @@
       }
     }
     input.name = property.name;
-    if (property.kind === 'boolean') label.append(input, caption); else label.append(caption, input);
+    if (property.name === 'linkId' && property.kind === 'select') {
+      const controls = document.createElement('div');
+      controls.className = 'link-navigation-controls';
+      const navigateButton = document.createElement('button');
+      navigateButton.type = 'button';
+      navigateButton.className = 'link-navigation-button';
+      navigateButton.textContent = 'Ir para o link selecionado';
+      navigateButton.title = 'Selecionar e centralizar o evento receptor deste link';
+      const updateNavigationAvailability = () => {
+        const target = findElement(input.value);
+        navigateButton.disabled = !target
+          || target.tag !== 'BpmnIntermediateEvent'
+          || String(target.type) !== '42'
+          || !findShape(input.value);
+      };
+      input.addEventListener('change', updateNavigationAvailability);
+      navigateButton.addEventListener('click', () => navigateToLinkedEvent(input.value));
+      updateNavigationAvailability();
+      controls.append(input, navigateButton);
+      label.append(caption, controls);
+    } else if (property.kind === 'boolean') label.append(input, caption); else label.append(caption, input);
     return label;
   }
 
@@ -7107,8 +7243,9 @@
 
   function readForm() {
     const values = {};
-    for (const control of propertyForm.elements) {
-      if (!control.name) continue;
+    for (const field of propertyFields.querySelectorAll('[data-property-name]')) {
+      const control = field.querySelector('[name]');
+      if (!control?.name) continue;
       values[control.name] = control.type === 'checkbox'
         ? control.checked
         : (control.type === 'color' ? control.value.replace(/^#/, '').toUpperCase() : control.value);
@@ -7134,6 +7271,106 @@
     if (errors) setStatus(`${summary} · ${errors} erro(s)`, 'error');
     else if (warnings) setStatus(`${summary} · ${warnings} aviso(s)`, 'warning');
     else setStatus(`${summary} · estrutura válida`, 'ok');
+  }
+
+  function updateValidationProblemsButton(data) {
+    const groups = validationProblemGroups(data);
+    const errors = groups.reduce((total, group) => total + group.items.filter((item) => item.severity === 'error').length, 0);
+    const warnings = groups.reduce((total, group) => total + group.items.filter((item) => item.severity === 'warning').length, 0);
+    showErrorsButton.textContent = `Erros (${errors})`;
+    showErrorsButton.title = errors || warnings
+      ? `Exibir ${errors} erro(s) e ${warnings} aviso(s), agrupados por elemento`
+      : 'Nenhum erro ou aviso encontrado';
+    showErrorsButton.disabled = !groups.length;
+    showErrorsButton.classList.toggle('has-errors', errors > 0);
+    showErrorsButton.classList.toggle('has-warnings', warnings > 0);
+  }
+
+  function showValidationProblems() {
+    const groups = validationProblemGroups(state.data);
+    validationProblemList.replaceChildren();
+    const errorCount = groups.reduce((total, group) => total + group.items.filter((item) => item.severity === 'error').length, 0);
+    const warningCount = groups.reduce((total, group) => total + group.items.filter((item) => item.severity === 'warning').length, 0);
+    validationDialogSummary.textContent = `${groups.length} elemento(s) · ${errorCount} erro(s) · ${warningCount} aviso(s)`;
+    if (!groups.length) {
+      const empty = document.createElement('div');
+      empty.className = 'validation-problem-empty';
+      empty.textContent = 'Nenhum erro ou aviso encontrado.';
+      validationProblemList.append(empty);
+    }
+    for (const group of groups) validationProblemList.append(createValidationProblemGroup(group));
+    if (!validationDialog.open) validationDialog.showModal();
+  }
+
+  function validationProblemGroups(data) {
+    if (!data?.supported) return [];
+    const groups = new Map();
+    const addProblem = (elementId, item) => {
+      const key = String(elementId || '__process__');
+      if (!groups.has(key)) groups.set(key, { elementId: key === '__process__' ? '' : key, items: [], keys: new Set() });
+      const group = groups.get(key);
+      const problemKey = `${item.severity}|${item.code || ''}|${item.message}`;
+      if (group.keys.has(problemKey)) return;
+      group.keys.add(problemKey);
+      group.items.push(item);
+    };
+    for (const element of data.elements ?? []) {
+      for (const message of element.configurationIssues ?? []) {
+        addProblem(element.id, { severity: 'error', code: 'CONFIG', message });
+      }
+    }
+    for (const finding of data.validation?.errors ?? []) {
+      addProblem(finding.elementId, { severity: 'error', code: finding.code, message: finding.message });
+    }
+    for (const finding of data.validation?.warnings ?? []) {
+      addProblem(finding.elementId, { severity: 'warning', code: finding.code, message: finding.message });
+    }
+    return [...groups.values()]
+      .map((group) => ({ ...group, element: group.elementId ? findElement(group.elementId) : null }))
+      .sort((left, right) => {
+        if (!left.elementId) return -1;
+        if (!right.elementId) return 1;
+        const leftCode = Number(left.element?.code || Number.MAX_SAFE_INTEGER);
+        const rightCode = Number(right.element?.code || Number.MAX_SAFE_INTEGER);
+        return leftCode - rightCode || left.elementId.localeCompare(right.elementId, 'pt-BR');
+      });
+  }
+
+  function createValidationProblemGroup(group) {
+    const container = document.createElement('section');
+    container.className = 'validation-problem-group';
+    const target = document.createElement('button');
+    target.type = 'button';
+    target.className = 'validation-problem-target';
+    const title = document.createElement('span');
+    title.className = 'validation-problem-title';
+    title.textContent = group.element
+      ? `${group.element.code ? `${group.element.code} · ` : ''}${group.element.name || group.element.typeLabel} (${group.element.id})`
+      : (group.elementId ? `Elemento ${group.elementId}` : 'Processo / estrutura');
+    const count = document.createElement('span');
+    count.className = 'validation-problem-count';
+    count.textContent = String(group.items.length);
+    target.append(title, count);
+    const navigable = Boolean(group.element && (findShape(group.elementId) || findConnection(group.elementId) || group.element.tag === 'BpmnProcess'));
+    target.disabled = !navigable;
+    target.title = navigable ? 'Selecionar e centralizar este elemento' : 'Não há representação visual para este item';
+    if (navigable) target.addEventListener('click', () => {
+      validationDialog.close();
+      focusDiagramElement(group.elementId);
+    });
+    const items = document.createElement('ul');
+    items.className = 'validation-problem-items';
+    for (const problem of group.items) {
+      const item = document.createElement('li');
+      item.className = `validation-problem-item ${problem.severity}`;
+      const code = document.createElement('span');
+      code.className = 'validation-problem-code';
+      code.textContent = problem.code || (problem.severity === 'warning' ? 'AVISO' : 'ERRO');
+      item.append(code, document.createTextNode(problem.message));
+      items.append(item);
+    }
+    container.append(target, items);
+    return container;
   }
 
   function setStatus(message, kind) { status.textContent = message; status.className = `status ${kind}`; }
@@ -7250,6 +7487,7 @@
   function propertyLabel(name) {
     if (name === 'cores') return 'Cor';
     if (name === 'signalId') return 'Sinal';
+    if (name === 'linkId') return 'Link';
     return ({ name: 'Nome', instrucoes: 'Instruções', instructions: 'Instruções', authNotify: 'Notificar responsável', digitalSignature: 'Assinatura digital', confirmarSenha: 'Confirmar senha', inibeOpcaoTransferir: 'Inibir transferência', prazoConclusao: 'Prazo de conclusão', expediente: 'Expediente', esforcoCalculo: 'Cálculo do esforço', esforcoPrevisto: 'Esforço previsto', executionType: 'Execução', executionAttempts: 'Tentativas', frequency: 'A cada', frequencyType: 'Unidade', executionSucessfulMessage: 'Mensagem de sucesso', serviceName: 'Serviço', messageType: 'Tipo do destinatário', messageReceiver: 'Destinatário', messageSubject: 'Assunto', messageContent: 'Conteúdo', process: 'Subprocesso', initialTask: 'Atividade inicial', notificaRequisitante: 'Notificar requisitante', transferAttachments: 'Transferir anexos', cancelSubProcess: 'Cancelamento conjunto', sendToNextTaskInSubProcess: 'Movimentar próxima atividade', atividadeFluxo: 'Atividade do fluxo', atividadeRetorno: 'Atividade de retorno', permiteRetorno: 'Permite retorno', fluxoAutomatico: 'Fluxo automático', defaultLink: 'Fluxo padrão', movementTitle: 'Título da movimentação', movementDescription: 'Descrição da movimentação', movementAccessLinkDescription: 'Título do link da movimentação', documentId: 'Documento' })[name] || name;
   }
   function svg(name, attributes) { const node = document.createElementNS('http://www.w3.org/2000/svg', name); Object.entries(attributes).forEach(([key, value]) => node.setAttribute(key, String(value))); return node; }

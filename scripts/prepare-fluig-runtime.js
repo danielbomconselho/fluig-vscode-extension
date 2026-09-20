@@ -7,6 +7,14 @@ const path = require("node:path");
 
 const projectRoot = path.resolve(__dirname, "..");
 const runtimeRoot = path.join(projectRoot, "runtime");
+const creationTemplateSource = path.join(
+    projectRoot,
+    "test",
+    "bpmn",
+    "fixtures",
+    "toexportbpmnteste.process.gz.b64"
+);
+const creationTemplateTarget = path.join(runtimeRoot, "bpmn", "creation-template.process.gz.b64");
 
 const studioBundlePrefixes = [
     "com.totvs.tds.ecm.designer.export.bpmn20_",
@@ -110,6 +118,8 @@ function prepareStudio(options) {
         ].join("\n")
     );
     const total = files.reduce((sum, file) => sum + file.bytes, 0);
+    fs.mkdirSync(path.dirname(creationTemplateTarget), { recursive: true });
+    fs.copyFileSync(creationTemplateSource, creationTemplateTarget);
     console.log(`Fluig Studio preparado: ${files.length} JARs, ${(total / 1024 / 1024).toFixed(2)} MB.`);
 }
 
@@ -123,6 +133,9 @@ function checkRuntime() {
     const javaDirectory = path.join(runtimeRoot, "java");
     if (fs.existsSync(javaDirectory)) {
         throw new Error(`Runtime Java portatil nao deve ser empacotado: ${javaDirectory}`);
+    }
+    if (!fs.existsSync(creationTemplateTarget) || !fs.statSync(creationTemplateTarget).size) {
+        throw new Error(`Template visual BPMN empacotado ausente: ${creationTemplateTarget}`);
     }
     console.log("Runtime Fluig Studio valido e sem Java portatil.");
 }

@@ -92,6 +92,7 @@ function getWebviewHtml(webview, scriptUri, styleUri, nonce, dragGeometryUri = '
       </label>
       <button id="routeFlows" title="Recalcular rotas sem mover os elementos">Ajustar fluxos</button>
       <button id="generateTranslations" title="Gerar e sincronizar os arquivos de tradução">Traduções</button>
+      <button id="showErrors" class="validation-list-button" title="Exibir erros agrupados por elemento" disabled>Erros (0)</button>
       <button id="validate" title="Validar estrutura">Validar</button>
       <button id="openText" title="Abrir no editor de texto">XML</button>
     </div>
@@ -226,6 +227,17 @@ function getWebviewHtml(webview, scriptUri, styleUri, nonce, dragGeometryUri = '
       <button type="button" class="palette-tool" data-tool="document"><span class="palette-document-icon"></span>Documento</button>
     </aside>
   </main>
+  <dialog id="validationDialog" class="validation-dialog" aria-labelledby="validationDialogTitle">
+    <header class="validation-dialog-header">
+      <div>
+        <span class="eyebrow">Validação do processo</span>
+        <h2 id="validationDialogTitle">Erros por elemento</h2>
+      </div>
+      <button id="closeValidationDialog" type="button" class="validation-dialog-close" title="Fechar" aria-label="Fechar">×</button>
+    </header>
+    <div id="validationDialogSummary" class="validation-dialog-summary"></div>
+    <div id="validationProblemList" class="validation-problem-list"></div>
+  </dialog>
   <div id="toast" class="toast hidden" role="status"></div>
   <script nonce="${nonce}" src="${dragGeometryUri}"></script>
   <script nonce="${nonce}" src="${flowRouterUri}"></script>

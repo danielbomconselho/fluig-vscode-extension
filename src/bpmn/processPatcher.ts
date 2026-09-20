@@ -43,6 +43,7 @@ const {
   normalizeProcessGeneralConfiguration,
   supportsProcessGeneral
 } = require('./processGeneral');
+const { assertDistinctProcessCode } = require('./processIdentity');
 const {
   normalizeProcessVersionConfiguration,
   supportsProcessVersion
@@ -92,6 +93,7 @@ const ALLOWED_PROPERTIES = {
 const SUBTYPE_ALLOWED_PROPERTIES = new Map([
   ['BpmnStartEvent:14', new Set(['name', 'signalId'])],
   ['BpmnEndEvent:64', new Set(['name', 'notificaRequisitante', 'signalId'])],
+  ['BpmnIntermediateEvent:36', new Set(['name', 'linkId'])],
   ['BpmnIntermediateEvent:37', new Set(['name', 'signalId'])],
   ['BpmnIntermediateEvent:41', new Set(['name', 'signalId'])],
   ['BpmnTask:82', new Set([
@@ -171,12 +173,18 @@ function patchProcess(text, elementId, requestedChanges) {
     if (!allowed.has(property)) {
       throw new Error(`Propriedade ${property} não pode ser editada em ${element.tag}.`);
     }
-    const value = normalizeValue(property, inputValue);
+    const value = property === 'linkId'
+      ? normalizeIntermediateLinkTarget(model, element, inputValue)
+      : normalizeValue(property, inputValue);
     if (MESSAGE_DATA_PROPERTIES.has(property)) {
       messageChanges.set(MESSAGE_DATA_PROPERTIES.get(property), value);
       continue;
     }
-    patchAttribute(text, element.node, property, value, patches);
+    if (property === 'linkId' && value === '' && element.node.attributeMap.linkId) {
+      patches.push(removalPatch(text, element.node, element.node.attributeMap.linkId));
+    } else {
+      patchAttribute(text, element.node, property, value, patches);
+    }
 
     if (property === 'cores' && element.tag === 'BpmnSwimLane') {
       patchSwimLaneVisualColor(text, model, element, value, patches);
@@ -209,6 +217,19 @@ function patchProcess(text, elementId, requestedChanges) {
     validation,
     patches: uniquePatches
   };
+}
+
+function normalizeIntermediateLinkTarget(model, element, inputValue) {
+  if (element.tag !== 'BpmnIntermediateEvent' || element.type !== '36') {
+    throw new Error('Somente o evento intermediário de envio de link pode selecionar um receptor.');
+  }
+  const linkId = String(inputValue ?? '').trim();
+  if (!linkId || linkId === '0') return '';
+  const target = model.elements.find((item) => item.id === linkId);
+  if (!target || target.tag !== 'BpmnIntermediateEvent' || target.type !== '42') {
+    throw new Error(`Evento receptor de link inválido: ${linkId}. Selecione um evento intermediário de recebimento de link.`);
+  }
+  return linkId;
 }
 
 function patchProcessManager(text, elementId, requestedAssignment) {
@@ -291,6 +312,33 @@ function patchProcessGeneral(text, elementId, requestedConfiguration, catalogs =
     throw new Error(`As propriedades gerais foram recusadas porque produziriam ${validation.errors.length} erro(s) estrutural(is).`);
   }
   return { text: updatedText, changed: updatedText !== text, model: updatedModel, validation, patches: uniquePatches };
+}
+
+function patchProcessIdentity(text, expectedCode, requestedCode) {
+  const model = parseProcess(text);
+  const beforeValidation = validateProcess(model);
+  if (!beforeValidation.ok) {
+    throw new Error(`O arquivo possui ${beforeValidation.errors.length} erro(s) estrutural(is) antes da renomeacao do processo.`);
+  }
+  const element = model.process;
+  if (!element || element.id !== String(expectedCode ?? '') || !supportsProcessGeneral(element)) {
+    throw new Error(`Processo nao encontrado: ${expectedCode || '(sem id)'}.`);
+  }
+  const code = assertDistinctProcessCode(element.id, requestedCode);
+  if (code === element.id) {
+    return { text, changed: false, model, validation: beforeValidation, patches: [] };
+  }
+  const patches = [];
+  patchAttribute(text, element.node, 'id', code, patches, { required: true });
+  patchAttribute(text, model.diagram, 'name', code, patches, { required: true });
+  const uniquePatches = deduplicatePatches(patches);
+  const updatedText = applyPatches(text, uniquePatches);
+  const updatedModel = parseProcess(updatedText);
+  const validation = validateProcess(updatedModel);
+  if (!validation.ok) {
+    throw new Error(`A renomeacao foi recusada porque produziria ${validation.errors.length} erro(s) estrutural(is).`);
+  }
+  return { text: updatedText, changed: true, model: updatedModel, validation, patches: uniquePatches };
 }
 
 function patchProcessComplements(text, node, complements, patches) {
@@ -1074,6 +1122,7 @@ function createSequenceFlow(text, request) {
   const source = model.elements.find((item) => item.id === sourceId);
   const target = model.elements.find((item) => item.id === targetId);
   validateConnectionEndpoints(source, target, model);
+  const documentaryAssociation = ['BpmnAnnotation', 'BpmnDatabase', 'BpmnDocument'].includes(source.tag);
   if (model.flows.some((flow) => flow.attributes.sourceRef === sourceId && flow.attributes.targetRef === targetId)) {
     throw new Error('Já existe um fluxo direto entre estes elementos.');
   }
@@ -1091,13 +1140,19 @@ function createSequenceFlow(text, request) {
   if (!sourceAnchor || !targetAnchor) throw new Error('Origem ou destino sem ChopboxAnchor compatível.');
 
   const visualConnections = model.diagram.children.filter((node) => node.localName === 'connections');
-  const template = findRegularConnectionTemplate(model);
+  const templateSource = resolveCreationTemplate(
+    text,
+    model,
+    request,
+    (candidateModel) => findRegularConnectionTemplate(candidateModel)
+  );
+  const template = templateSource?.template;
   if (!template) throw new Error('O diagrama não possui um fluxo regular que possa servir de template visual seguro.');
   const connectionIndex = visualConnections.length;
   const connectionRef = `/0/@connections.${connectionIndex}`;
   const flowId = nextBusinessId(model, 'flow');
   const bendpoints = normalizeLayoutBendpoints(request?.bendpoints ?? [], flowId);
-  const connectionXml = cloneRegularConnection(text, template, {
+  const connectionXml = cloneRegularConnection(templateSource.text, template, {
     flowId,
     start: `/0/@children.${sourceIndex}/@anchors.0`,
     end: `/0/@children.${targetIndex}/@anchors.0`,
@@ -1105,12 +1160,16 @@ function createSequenceFlow(text, request) {
   });
 
   const xmiRoot = model.xml.children.find((node) => node.name === 'xmi:XMI');
-  const lastConnection = visualConnections.at(-1);
-  if (!xmiRoot || !lastConnection) throw new Error('Estrutura XMI/Graphiti sem ponto de inserção seguro.');
+  if (!xmiRoot) throw new Error('Estrutura XMI/Graphiti sem ponto de inserção seguro.');
   const eol = text.includes('\r\n') ? '\r\n' : '\n';
   const logicalFlow = `  <bpmn2:SequenceFlow id="${flowId}" name="" sourceRef="${sourceId}" targetRef="${targetId}" atividadeFluxo="" atividadeRetorno=""/>`;
+  const connectionInsertionOffset = diagramInsertionOffset(model, 'connections');
   const patches = [
-    { start: lastConnection.closeEnd, end: lastConnection.closeEnd, value: `${eol}    ${connectionXml}` },
+    {
+      start: connectionInsertionOffset,
+      end: connectionInsertionOffset,
+      value: `${visualConnections.length ? `${eol}    ` : ''}${connectionXml}${eol}    `
+    },
     { start: xmiRoot.closeStart, end: xmiRoot.closeStart, value: `${logicalFlow}${eol}` }
   ];
   patchAttribute(text, source.node, 'outgoing', appendReference(source.attributes.outgoing, flowId), patches, { required: true });
@@ -1133,7 +1192,15 @@ function createSequenceFlow(text, request) {
   if (!validation.ok) {
     throw new Error(`A conexão foi recusada porque produziria ${validation.errors.length} erro(s) estrutural(is).`);
   }
-  return { text: updatedText, changed: true, flowId, model: updatedModel, validation, patches: uniquePatches };
+  return {
+    text: updatedText,
+    changed: true,
+    flowId,
+    documentaryAssociation,
+    model: updatedModel,
+    validation,
+    patches: uniquePatches
+  };
 }
 
 function reconnectSequenceFlow(text, request) {
@@ -1735,9 +1802,9 @@ function deleteIsolatedTask(text, elementId) {
       if (splitReferences(element.attributes.attachedEvents).length) {
         throw new Error(`A atividade ${element.id} possui evento anexado.`);
       }
-      if (String(element.attributes.scriptFileName ?? '').trim()) {
-        throw new Error(`A atividade ${element.id} possui scriptFileName e seu arquivo não será excluído automaticamente.`);
-      }
+    },
+    resultFields(element) {
+      return { scriptFileName: String(element.attributes.scriptFileName ?? '').trim() };
     }
   });
 }
@@ -1758,10 +1825,6 @@ function deleteTaskWithIncidentFlows(text, elementId) {
   if (splitReferences(element.attributes.attachedEvents).length) {
     throw new Error(`A atividade ${element.id} possui evento anexado.`);
   }
-  if (String(element.attributes.scriptFileName ?? '').trim()) {
-    throw new Error(`A atividade ${element.id} possui scriptFileName e seu arquivo não será excluído automaticamente.`);
-  }
-
   const incidentFlows = model.flows.filter((flow) => (
     flow.attributes.sourceRef === elementId || flow.attributes.targetRef === elementId
   ));
@@ -1860,6 +1923,7 @@ function deleteTaskWithIncidentFlows(text, elementId) {
     elementTag: element.tag,
     elementType: element.type,
     elementName: element.name,
+    scriptFileName: String(element.attributes.scriptFileName ?? '').trim(),
     activityCode: numericSuffix(elementId),
     removedChildIndex: childIndex,
     removedFlowIds: [...removedFlowIds],
@@ -2024,6 +2088,30 @@ function deleteSubProcessWithIncidentFlows(text, elementId) {
 }
 
 function deleteIsolatedArtifact(text, elementId) {
+  const initialModel = parseProcess(text);
+  const requestedId = String(elementId ?? '');
+  const matches = initialModel.elements.filter((item) => item.id === requestedId);
+  if (matches.length === 1) {
+    const incidentFlows = initialModel.flows.filter((flow) => (
+      flow.attributes.sourceRef === requestedId || flow.attributes.targetRef === requestedId
+    ));
+    if (incidentFlows.length) {
+      let updatedText = text;
+      const removedFlowIds = [];
+      for (const flow of incidentFlows) {
+        const result = deleteSequenceFlow(updatedText, flow.id);
+        updatedText = result.text;
+        removedFlowIds.push(flow.id);
+      }
+      const result = deleteIsolatedArtifact(updatedText, requestedId);
+      return {
+        ...result,
+        text: result.text,
+        removedFlowIds,
+        patches: [{ start: 0, end: text.length, value: result.text }]
+      };
+    }
+  }
   return deleteIsolatedDiagramNode(text, elementId, {
     noun: 'artefato',
     selectionMessage: 'Selecione uma anotação, database, documento ou grupo isolado para excluir.',
@@ -2036,6 +2124,211 @@ function deleteIsolatedArtifact(text, elementId) {
       }
     }
   });
+}
+
+function deleteDiagramElements(text, elementIds) {
+  const requestedIds = [...new Set((elementIds ?? []).map((id) => String(id ?? '').trim()).filter(Boolean))];
+  if (requestedIds.length < 2) throw new Error('Selecione pelo menos dois elementos para a exclusão múltipla.');
+  const initialModel = parseProcess(text);
+  const beforeValidation = validateProcess(initialModel);
+  if (!beforeValidation.ok) {
+    throw new Error(`O arquivo possui ${beforeValidation.errors.length} erro(s) estrutural(is) antes da exclusão.`);
+  }
+  const initialById = new Map([...initialModel.elements, ...initialModel.flows].map((item) => [item.id, item]));
+  const missing = requestedIds.filter((id) => !initialById.has(id));
+  if (missing.length) throw new Error(`Elementos não encontrados: ${missing.join(', ')}.`);
+  const unsupported = requestedIds.filter((id) => {
+    const element = initialById.get(id);
+    if (element.tag === 'SequenceFlow') return false;
+    if (element.tag === 'BpmnTask') return !['80', '81', '82', '84', '85', '86', '87'].includes(String(element.type));
+    if (element.tag === 'BpmnSubProcess') return !['100', '101'].includes(String(element.type));
+    if (element.tag === 'BpmnGateway') return !['120', '121', '126', '127'].includes(String(element.type));
+    if (element.tag === 'BpmnStartEvent') return !['10', '12', '13', '14', '16'].includes(String(element.type));
+    if (element.tag === 'BpmnEndEvent') return !['60', '63', '64', '65', '66', '68'].includes(String(element.type));
+    if (element.tag === 'BpmnIntermediateEvent') return !['30', '32', '35', '36', '37', '39', '41', '42', '43'].includes(String(element.type));
+    if (['BpmnPool', 'BpmnSwimLane'].includes(element.tag)) return false;
+    if (['BpmnAnnotation', 'BpmnDatabase', 'BpmnDocument', 'BpmnGroup'].includes(element.tag)) return false;
+    return true;
+  });
+  if (unsupported.length) throw new Error(`A exclusão múltipla não aceita: ${unsupported.join(', ')}.`);
+
+  const priority = (id) => {
+    const element = initialById.get(id);
+    if (element.tag === 'BpmnPool') return 0;
+    if (element.tag === 'BpmnIntermediateEvent' && String(element.type) === '43') return 0;
+    if (element.tag === 'SequenceFlow') return 3;
+    return 1;
+  };
+  const orderedIds = [...requestedIds].sort((left, right) => priority(left) - priority(right));
+  let updatedText = text;
+  const outcomes = [];
+  const removedFlowIds = new Set();
+  for (const id of orderedIds) {
+    const currentModel = parseProcess(updatedText);
+    const element = [...currentModel.elements, ...currentModel.flows].find((item) => item.id === id);
+    if (!element) continue;
+    let result;
+    if (element.tag === 'SequenceFlow') result = deleteSequenceFlow(updatedText, id);
+    else if (element.tag === 'BpmnIntermediateEvent' && String(element.type) === '43') result = deleteAttachedErrorEvent(updatedText, id);
+    else if (element.tag === 'BpmnTask') result = deleteIsolatedTask(updatedText, id);
+    else if (element.tag === 'BpmnSubProcess') result = deleteIsolatedSubProcess(updatedText, id);
+    else if (element.tag === 'BpmnGateway') result = deleteIsolatedGateway(updatedText, id);
+    else if (['BpmnStartEvent', 'BpmnEndEvent', 'BpmnIntermediateEvent'].includes(element.tag)) result = deleteIsolatedEvent(updatedText, id);
+    else if (['BpmnPool', 'BpmnSwimLane'].includes(element.tag)) result = deleteDiagramContainer(updatedText, id);
+    else result = deleteIsolatedArtifact(updatedText, id);
+    updatedText = result.text;
+    outcomes.push(result);
+    for (const flowId of result.removedFlowIds ?? []) removedFlowIds.add(flowId);
+    if (element.tag === 'SequenceFlow') removedFlowIds.add(id);
+  }
+
+  const updatedModel = parseProcess(updatedText);
+  const validation = validateProcess(updatedModel);
+  if (!validation.ok) {
+    throw new Error(`A exclusão múltipla foi recusada porque produziria ${validation.errors.length} erro(s) estrutural(is).`);
+  }
+  const remainingIds = new Set([...updatedModel.elements, ...updatedModel.flows].map((item) => item.id));
+  const notRemoved = requestedIds.filter((id) => remainingIds.has(id));
+  if (notRemoved.length) throw new Error(`A exclusão múltipla não removeu: ${notRemoved.join(', ')}.`);
+  return {
+    text: updatedText,
+    changed: updatedText !== text,
+    elementIds: requestedIds,
+    removedFlowIds: [...removedFlowIds],
+    outcomes,
+    model: updatedModel,
+    validation,
+    patches: [{ start: 0, end: text.length, value: updatedText }]
+  };
+}
+
+function deleteDiagramContainer(text, elementId) {
+  const model = parseProcess(text);
+  const beforeValidation = validateProcess(model);
+  if (!beforeValidation.ok) {
+    throw new Error(`O arquivo possui ${beforeValidation.errors.length} erro(s) estrutural(is) antes da exclusao.`);
+  }
+
+  const requestedId = String(elementId ?? '').trim();
+  const element = model.elements.find((item) => item.id === requestedId);
+  if (!element || !['BpmnPool', 'BpmnSwimLane'].includes(element.tag)) {
+    throw new Error('Selecione uma pool ou raia valida para excluir.');
+  }
+  const shapeMatches = model.shapes.filter((shape) => shape.businessObject === requestedId);
+  if (shapeMatches.length !== 1) throw new Error(`O container ${requestedId} nao possui um shape Graphiti bijetivo.`);
+  const shape = shapeMatches[0];
+  const directShapes = model.diagram?.children.filter((node) => node.localName === 'children') ?? [];
+  const directIndex = directShapes.indexOf(shape.node);
+  const nested = Boolean(shape.parentBusinessObject);
+  let poolShape = null;
+  let poolIndex = -1;
+  let nestedIndex = -1;
+  if (nested) {
+    poolShape = model.shapeById.get(shape.parentBusinessObject);
+    poolIndex = directShapes.indexOf(poolShape?.node);
+    const nestedShapes = poolShape?.node.children.filter((node) => node.localName === 'children') ?? [];
+    nestedIndex = nestedShapes.indexOf(shape.node);
+    if (!poolShape || poolIndex < 0 || nestedIndex < 0) {
+      throw new Error(`A raia ${requestedId} nao possui uma pool visual direta valida.`);
+    }
+  } else if (directIndex < 0 || shape.node.parent !== model.diagram) {
+    throw new Error(`O shape de ${requestedId} nao e filho direto do diagrama.`);
+  }
+
+  const nestedLaneIds = element.tag === 'BpmnPool'
+    ? model.shapes
+      .filter((candidate) => candidate.parentBusinessObject === requestedId)
+      .map((candidate) => model.elements.find((item) => item.id === candidate.businessObject))
+      .filter((item) => item?.tag === 'BpmnSwimLane')
+      .map((item) => item.id)
+    : [];
+  const removedContainerIds = [requestedId, ...nestedLaneIds];
+  const removedIds = new Set(removedContainerIds);
+  const removedElements = model.elements.filter((item) => removedIds.has(item.id));
+  if (removedElements.length !== removedIds.size) {
+    throw new Error(`A estrutura logica de ${requestedId} esta incompleta.`);
+  }
+  if (model.flows.some((flow) => removedIds.has(flow.attributes.sourceRef) || removedIds.has(flow.attributes.targetRef))) {
+    throw new Error(`O container ${requestedId} possui fluxo logico inesperado.`);
+  }
+
+  const childRef = nested
+    ? `/0/@children.${poolIndex}/@children.${nestedIndex}`
+    : `/0/@children.${directIndex}`;
+  const pictogramLink = `${childRef}/@link`;
+  const pictogramLinks = splitReferences(model.diagram.attributeMap.pictogramLinks?.value);
+  if (pictogramLinks.filter((reference) => reference === pictogramLink).length !== 1) {
+    throw new Error(`O pictogramLinks nao referencia unicamente o shape de ${requestedId}.`);
+  }
+
+  const patches = [wholeLineRemovalPatch(text, shape.node)];
+  for (const removedElement of removedElements) patches.push(wholeLineRemovalPatch(text, removedElement.node));
+
+  if (nested) {
+    const remainingLanes = nestedLaneShapes(model, shape.parentBusinessObject)
+      .filter((candidate) => candidate.businessObject !== requestedId)
+      .sort((left, right) => left.localY - right.localY);
+    if (remainingLanes.length) {
+      const laneHeight = Math.max(40, Math.round(poolShape.height / remainingLanes.length));
+      const poolHeight = laneHeight * remainingLanes.length;
+      patchNumberAttribute(text, poolShape.graphicsNode, 'height', poolHeight, patches);
+      patchContainerLabelHeight(text, poolShape, poolHeight, patches);
+      for (const [index, lane] of remainingLanes.entries()) {
+        patchNumberAttribute(text, lane.graphicsNode, 'x', 30, patches);
+        patchNumberAttribute(text, lane.graphicsNode, 'y', index * laneHeight, patches);
+        patchNumberAttribute(text, lane.graphicsNode, 'width', poolShape.width - 30, patches);
+        patchNumberAttribute(text, lane.graphicsNode, 'height', laneHeight, patches);
+        patchContainerLabelHeight(text, lane, laneHeight, patches);
+      }
+    }
+  }
+
+  walk(model.xml, (node) => {
+    if (isInsideNode(node, shape.node) || removedElements.some((item) => isInsideNode(node, item.node))) return;
+    for (const attribute of node.attributes) {
+      for (const removedId of removedIds) {
+        if (attributeReferencesIdentifier(attribute.value, removedId)) {
+          throw new Error(`${removedId} ainda e referenciado por ${node.localName}.${attribute.name}.`);
+        }
+      }
+      const remapped = nested
+        ? remapNestedChildReferences(attribute.value, poolIndex, nestedIndex)
+        : remapChildReferences(attribute.value, directIndex);
+      if (!remapped.changed) continue;
+      if (remapped.value) patchAttribute(text, node, attribute.name, remapped.value, patches, { required: true });
+      else removeAttribute(text, node, attribute.name, patches);
+    }
+  });
+
+  const uniquePatches = deduplicatePatches(patches);
+  const updatedText = applyPatches(text, uniquePatches);
+  const updatedModel = parseProcess(updatedText);
+  const validation = validateProcess(updatedModel);
+  if (!validation.ok) {
+    throw new Error(`A exclusao foi recusada porque produziria ${validation.errors.length} erro(s) estrutural(is).`);
+  }
+  if (removedContainerIds.some((id) => updatedModel.elements.some((item) => item.id === id)
+    || updatedModel.shapes.some((item) => item.businessObject === id))) {
+    throw new Error(`A exclusao de ${requestedId} nao removeu todas as representacoes do container.`);
+  }
+  if (updatedModel.flows.length !== model.flows.length || updatedModel.connections.length !== model.connections.length) {
+    throw new Error(`A exclusao de ${requestedId} alterou fluxos indevidamente.`);
+  }
+  assertChildReferenceBounds(updatedModel);
+  return {
+    text: updatedText,
+    changed: true,
+    elementId: requestedId,
+    elementTag: element.tag,
+    elementName: element.name,
+    removedContainerIds,
+    removedNestedLaneIds: nestedLaneIds,
+    removedChildIndex: nested ? nestedIndex : directIndex,
+    parentPoolId: nested ? shape.parentBusinessObject : '',
+    model: updatedModel,
+    validation,
+    patches: uniquePatches
+  };
 }
 
 function deleteIsolatedDiagramNode(text, elementId, options) {
@@ -2153,8 +2446,9 @@ function createPool(text, request) {
   if (!model.diagram || !model.canvas?.node) throw new Error('O diagrama não possui canvas Graphiti editável.');
   const diagramShapes = model.diagram.children.filter((node) => node.localName === 'children');
   const xmiRoot = model.xml.children.find((node) => node.name === 'xmi:XMI');
-  const template = findPoolTemplate(model, diagramShapes);
-  if (!template || !diagramShapes.length || !xmiRoot) {
+  const templateSource = resolveCreationTemplate(text, model, request, findPoolTemplate);
+  const template = templateSource?.template;
+  if (!template || !xmiRoot) {
     throw new Error('O diagrama não possui um template de pool compatível com o Fluig Studio.');
   }
 
@@ -2168,7 +2462,7 @@ function createPool(text, request) {
   const poolId = `${preferredBusinessPrefix(model, 'BpmnPool', 'pool')}${poolNumber}`;
   const styles = model.diagram.children.filter((node) => node.localName === 'styles');
   const colors = model.diagram.children.filter((node) => node.localName === 'colors');
-  const styleNodes = containerStyleNodes(model, template);
+  const styleNodes = containerStyleNodes(templateSource.model, template);
   if (!styleNodes || !styles.length || !colors.length) {
     throw new Error('O template da pool não possui styles/colors compatíveis.');
   }
@@ -2176,7 +2470,7 @@ function createPool(text, request) {
   const labelStyleIndex = styles.length + 1;
   const colorIndex = colors.length;
   const shapeRef = '/0/@children.0';
-  const poolShapeXml = cloneContainerShape(text, template, {
+  const poolShapeXml = cloneContainerShape(templateSource.text, template, {
     businessObject: poolId,
     shapeRef,
     x,
@@ -2190,12 +2484,17 @@ function createPool(text, request) {
     removeLinkedChildren: true
   });
   const eol = text.includes('\r\n') ? '\r\n' : '\n';
-  const styleXml = styleNodes.map((node) => text.slice(node.start, node.closeEnd)).join(`${eol}    `);
+  const styleXml = styleNodes.map((node) => templateSource.text.slice(node.start, node.closeEnd)).join(`${eol}    `);
   const colorXml = '<colors red="255" green="255" blue="255"/>';
   const patches = [];
 
   remapDirectChildReferencesForInsertion(text, model, 0, patches, `${shapeRef}/@link`);
-  patches.push({ start: diagramShapes[0].start, end: diagramShapes[0].start, value: `${poolShapeXml}${eol}    ` });
+  const shapeInsertionOffset = diagramShapes[0]?.start ?? diagramInsertionOffset(model, 'children');
+  patches.push({
+    start: shapeInsertionOffset,
+    end: shapeInsertionOffset,
+    value: `${poolShapeXml}${eol}    `
+  });
   patches.push({ start: styles.at(-1).closeEnd, end: styles.at(-1).closeEnd, value: `${eol}    ${styleXml}` });
   patches.push({ start: colors.at(-1).closeEnd, end: colors.at(-1).closeEnd, value: `${eol}    ${colorXml}` });
   patches.push({
@@ -2233,10 +2532,10 @@ function createIsolatedNode(text, request) {
   if (!model.diagram || !model.canvas?.node) throw new Error('O diagrama não possui canvas Graphiti editável.');
   const definition = isolatedNodeDefinition(String(request?.kind ?? ''), String(request?.subtype ?? ''));
   const diagramShapes = model.diagram.children.filter((node) => node.localName === 'children');
-  const template = definition.findTemplate(model, diagramShapes);
-  const lastShape = diagramShapes.at(-1);
+  const templateSource = resolveCreationTemplate(text, model, request, definition.findTemplate);
+  const template = templateSource?.template;
   const xmiRoot = model.xml.children.find((node) => node.name === 'xmi:XMI');
-  if (!template || !lastShape || !xmiRoot) {
+  if (!template || !xmiRoot) {
     throw new Error(`O diagrama não possui template visual seguro para criar ${definition.label}.`);
   }
   const x = layoutNumber(request?.x, `${definition.kind}.x`);
@@ -2245,7 +2544,7 @@ function createIsolatedNode(text, request) {
   const elementId = `${definition.prefix}${number}`;
   const shapeIndex = diagramShapes.length;
   const shapeRef = `/0/@children.${shapeIndex}`;
-  const shapeXml = cloneIsolatedDirectShape(text, model, template, {
+  const shapeXml = cloneIsolatedDirectShape(templateSource.text, templateSource.model, template, {
     elementId,
     shapeRef,
     x,
@@ -2255,8 +2554,13 @@ function createIsolatedNode(text, request) {
   });
   const eol = text.includes('\r\n') ? '\r\n' : '\n';
   const logicalXml = definition.logical(elementId);
+  const shapeInsertionOffset = diagramInsertionOffset(model, 'children');
   const patches = [
-    { start: lastShape.closeEnd, end: lastShape.closeEnd, value: `${eol}    ${shapeXml}` },
+    {
+      start: shapeInsertionOffset,
+      end: shapeInsertionOffset,
+      value: `${diagramShapes.length ? `${eol}    ` : ''}${shapeXml}${eol}    `
+    },
     { start: xmiRoot.closeStart, end: xmiRoot.closeStart, value: `  ${logicalXml}${eol}` }
   ];
   patchAttribute(
@@ -2297,7 +2601,18 @@ function createAttachedErrorEvent(text, request) {
   }
 
   const diagramShapes = model.diagram.children.filter((node) => node.localName === 'children');
-  const template = findTypedElementTemplate(model, diagramShapes, 'BpmnIntermediateEvent', '43');
+  const templateSource = resolveCreationTemplate(
+    text,
+    model,
+    request,
+    (candidateModel, candidateShapes) => findTypedElementTemplate(
+      candidateModel,
+      candidateShapes,
+      'BpmnIntermediateEvent',
+      '43'
+    )
+  );
+  const template = templateSource?.template;
   const lastShape = diagramShapes.at(-1);
   const xmiRoot = model.xml.children.find((node) => node.name === 'xmi:XMI');
   if (!template || !lastShape || !xmiRoot) {
@@ -2311,7 +2626,7 @@ function createAttachedErrorEvent(text, request) {
   const elementId = `${prefix}${number}`;
   const shapeIndex = diagramShapes.length;
   const shapeRef = `/0/@children.${shapeIndex}`;
-  const shapeXml = cloneIsolatedDirectShape(text, model, template, {
+  const shapeXml = cloneIsolatedDirectShape(templateSource.text, templateSource.model, template, {
     elementId,
     shapeRef,
     x,
@@ -2475,7 +2790,13 @@ function createNestedSwimLane(text, model, request, poolId) {
   const poolChildren = poolShape.node.children.filter((node) => node.localName === 'children');
   const insertionNode = poolChildren[0];
   const xmiRoot = model.xml.children.find((node) => node.name === 'xmi:XMI');
-  const template = findSwimLaneTemplate(model, true);
+  const templateSource = resolveCreationTemplate(
+    text,
+    model,
+    request,
+    (candidateModel) => findSwimLaneTemplate(candidateModel, true)
+  );
+  const template = templateSource?.template;
   if (!template || !insertionNode || !xmiRoot) {
     throw new Error('A pool não possui estrutura/template compatível para receber uma raia.');
   }
@@ -2485,7 +2806,7 @@ function createNestedSwimLane(text, model, request, poolId) {
   const laneId = `${preferredBusinessPrefix(model, 'BpmnSwimLane', 'swimlane')}${laneNumber}`;
   const styles = model.diagram.children.filter((node) => node.localName === 'styles');
   const colors = model.diagram.children.filter((node) => node.localName === 'colors');
-  const styleNodes = containerStyleNodes(model, template);
+  const styleNodes = containerStyleNodes(templateSource.model, template);
   if (!styleNodes || !styles.length || !colors.length) throw new Error('O template da raia não possui styles/colors compatíveis.');
 
   const visualOrder = [...nestedLanes, { businessObject: laneId }];
@@ -2510,7 +2831,7 @@ function createNestedSwimLane(text, model, request, poolId) {
   const labelStyleIndex = styles.length + 1;
   const poolRef = `/0/@children.${poolIndex}`;
   const laneRef = `${poolRef}/@children.0`;
-  const laneShapeXml = cloneContainerShape(text, template, {
+  const laneShapeXml = cloneContainerShape(templateSource.text, template, {
     businessObject: laneId,
     shapeRef: laneRef,
     x: 30,
@@ -2524,7 +2845,7 @@ function createNestedSwimLane(text, model, request, poolId) {
     removeLinkedChildren: true
   });
   const eol = text.includes('\r\n') ? '\r\n' : '\n';
-  const styleXml = styleNodes.map((node) => text.slice(node.start, node.closeEnd)).join(`${eol}    `);
+  const styleXml = styleNodes.map((node) => templateSource.text.slice(node.start, node.closeEnd)).join(`${eol}    `);
 
   remapNestedChildReferencesForInsertion(text, model, poolIndex, 0, patches, `${laneRef}/@link`);
   patches.push({ start: insertionNode.start, end: insertionNode.start, value: `${laneShapeXml}${eol}      ` });
@@ -2546,8 +2867,14 @@ function createNestedSwimLane(text, model, request, poolId) {
 function createStandaloneSwimLane(text, model, request) {
   const diagramShapes = model.diagram.children.filter((node) => node.localName === 'children');
   const xmiRoot = model.xml.children.find((node) => node.name === 'xmi:XMI');
-  const template = findSwimLaneTemplate(model, false);
-  if (!template || !diagramShapes.length || !xmiRoot) {
+  const templateSource = resolveCreationTemplate(
+    text,
+    model,
+    request,
+    (candidateModel) => findSwimLaneTemplate(candidateModel, false)
+  );
+  const template = templateSource?.template;
+  if (!template || !xmiRoot) {
     throw new Error('O diagrama não possui um template de raia independente compatível.');
   }
   const x = layoutNumber(request?.x, 'novaRaia.x');
@@ -2560,13 +2887,13 @@ function createStandaloneSwimLane(text, model, request) {
   const laneId = `${preferredBusinessPrefix(model, 'BpmnSwimLane', 'swimlane')}${laneNumber}`;
   const styles = model.diagram.children.filter((node) => node.localName === 'styles');
   const colors = model.diagram.children.filter((node) => node.localName === 'colors');
-  const styleNodes = containerStyleNodes(model, template);
+  const styleNodes = containerStyleNodes(templateSource.model, template);
   if (!styleNodes || !styles.length || !colors.length) throw new Error('O template da raia não possui styles/colors compatíveis.');
   const palette = lanePalette(0, false);
   const patches = [];
   const color = ensureVisualColor(text, colors, palette, patches);
   const shapeRef = '/0/@children.0';
-  const laneShapeXml = cloneContainerShape(text, template, {
+  const laneShapeXml = cloneContainerShape(templateSource.text, template, {
     businessObject: laneId,
     shapeRef,
     x,
@@ -2580,9 +2907,14 @@ function createStandaloneSwimLane(text, model, request) {
     removeLinkedChildren: true
   });
   const eol = text.includes('\r\n') ? '\r\n' : '\n';
-  const styleXml = styleNodes.map((node) => text.slice(node.start, node.closeEnd)).join(`${eol}    `);
+  const styleXml = styleNodes.map((node) => templateSource.text.slice(node.start, node.closeEnd)).join(`${eol}    `);
   remapDirectChildReferencesForInsertion(text, model, 0, patches, `${shapeRef}/@link`);
-  patches.push({ start: diagramShapes[0].start, end: diagramShapes[0].start, value: `${laneShapeXml}${eol}    ` });
+  const shapeInsertionOffset = diagramShapes[0]?.start ?? diagramInsertionOffset(model, 'children');
+  patches.push({
+    start: shapeInsertionOffset,
+    end: shapeInsertionOffset,
+    value: `${laneShapeXml}${eol}    `
+  });
   patches.push({ start: styles.at(-1).closeEnd, end: styles.at(-1).closeEnd, value: `${eol}    ${styleXml}` });
   patches.push({
     start: xmiRoot.closeStart,
@@ -2623,12 +2955,18 @@ function createConnectedTask(text, request) {
   }
 
   const visualConnections = model.diagram.children.filter((node) => node.localName === 'connections');
-  const connectionTemplate = findRegularConnectionTemplate(model);
-  const taskTemplate = findDefaultTaskTemplate(model, diagramShapes);
+  const connectionTemplateSource = resolveCreationTemplate(
+    text,
+    model,
+    request,
+    (candidateModel) => findRegularConnectionTemplate(candidateModel)
+  );
+  const taskTemplateSource = resolveCreationTemplate(text, model, request, findDefaultTaskTemplate);
+  const connectionTemplate = connectionTemplateSource?.template;
+  const taskTemplate = taskTemplateSource?.template;
   const lastShape = diagramShapes.at(-1);
-  const lastConnection = visualConnections.at(-1);
   const xmiRoot = model.xml.children.find((node) => node.name === 'xmi:XMI');
-  if (!connectionTemplate || !taskTemplate || !lastShape || !lastConnection || !xmiRoot) {
+  if (!connectionTemplate || !taskTemplate || !lastShape || !xmiRoot) {
     throw new Error('O diagrama não possui templates visuais seguros para criar atividade e fluxo.');
   }
   const templateAnchors = taskTemplate.node.children.filter((node) => node.localName === 'anchors');
@@ -2645,7 +2983,7 @@ function createConnectedTask(text, request) {
   const connectionIndex = visualConnections.length;
   const shapeRef = `/0/@children.${shapeIndex}`;
   const connectionRef = `/0/@connections.${connectionIndex}`;
-  const taskShapeXml = cloneDefaultTaskShape(text, taskTemplate, {
+  const taskShapeXml = cloneDefaultTaskShape(taskTemplateSource.text, taskTemplate, {
     taskId,
     shapeRef,
     connectionRef,
@@ -2654,7 +2992,7 @@ function createConnectedTask(text, request) {
     name: 'Atividade'
   });
   const bendpoints = normalizeLayoutBendpoints(request?.bendpoints ?? [], flowId);
-  const connectionXml = cloneRegularConnection(text, connectionTemplate, {
+  const connectionXml = cloneRegularConnection(connectionTemplateSource.text, connectionTemplate, {
     flowId,
     start: `/0/@children.${sourceIndex}/@anchors.0`,
     end: `${shapeRef}/@anchors.0`,
@@ -2663,9 +3001,14 @@ function createConnectedTask(text, request) {
   const eol = text.includes('\r\n') ? '\r\n' : '\n';
   const logicalTask = `  <bpmn2:BpmnTask id="${taskId}" name="Atividade" incoming="${flowId}" type="80" loopType="0" authNotify="true" expediente="" selecionaColaboradores="1" esforcoCalculo="0" executionAttempts="0" frequency="0"/>`;
   const logicalFlow = `  <bpmn2:SequenceFlow id="${flowId}" name="" sourceRef="${sourceId}" targetRef="${taskId}" atividadeFluxo=""/>`;
+  const connectionInsertionOffset = diagramInsertionOffset(model, 'connections');
   const patches = [
     { start: lastShape.closeEnd, end: lastShape.closeEnd, value: `${eol}    ${taskShapeXml}` },
-    { start: lastConnection.closeEnd, end: lastConnection.closeEnd, value: `${eol}    ${connectionXml}` },
+    {
+      start: connectionInsertionOffset,
+      end: connectionInsertionOffset,
+      value: `${visualConnections.length ? `${eol}    ` : ''}${connectionXml}${eol}    `
+    },
     { start: xmiRoot.closeStart, end: xmiRoot.closeStart, value: `${logicalTask}${eol}${logicalFlow}${eol}` }
   ];
   patchAttribute(text, source.node, 'outgoing', appendReference(source.attributes.outgoing, flowId), patches, { required: true });
@@ -2725,12 +3068,18 @@ function createConnectedGateway(text, request) {
   }
 
   const visualConnections = model.diagram.children.filter((node) => node.localName === 'connections');
-  const connectionTemplate = findRegularConnectionTemplate(model);
-  const gatewayTemplate = findExclusiveGatewayTemplate(model, diagramShapes);
+  const connectionTemplateSource = resolveCreationTemplate(
+    text,
+    model,
+    request,
+    (candidateModel) => findRegularConnectionTemplate(candidateModel)
+  );
+  const gatewayTemplateSource = resolveCreationTemplate(text, model, request, findExclusiveGatewayTemplate);
+  const connectionTemplate = connectionTemplateSource?.template;
+  const gatewayTemplate = gatewayTemplateSource?.template;
   const lastShape = diagramShapes.at(-1);
-  const lastConnection = visualConnections.at(-1);
   const xmiRoot = model.xml.children.find((node) => node.name === 'xmi:XMI');
-  if (!connectionTemplate || !gatewayTemplate || !lastShape || !lastConnection || !xmiRoot) {
+  if (!connectionTemplate || !gatewayTemplate || !lastShape || !xmiRoot) {
     throw new Error('O diagrama não possui templates visuais seguros para criar gateway e fluxo.');
   }
   const templateAnchors = gatewayTemplate.node.children.filter((node) => node.localName === 'anchors');
@@ -2747,7 +3096,7 @@ function createConnectedGateway(text, request) {
   const connectionIndex = visualConnections.length;
   const shapeRef = `/0/@children.${shapeIndex}`;
   const connectionRef = `/0/@connections.${connectionIndex}`;
-  const gatewayShapeXml = cloneExclusiveGatewayShape(text, gatewayTemplate, {
+  const gatewayShapeXml = cloneExclusiveGatewayShape(gatewayTemplateSource.text, gatewayTemplate, {
     gatewayId,
     shapeRef,
     connectionRef,
@@ -2755,7 +3104,7 @@ function createConnectedGateway(text, request) {
     y
   });
   const bendpoints = normalizeLayoutBendpoints(request?.bendpoints ?? [], flowId);
-  const connectionXml = cloneRegularConnection(text, connectionTemplate, {
+  const connectionXml = cloneRegularConnection(connectionTemplateSource.text, connectionTemplate, {
     flowId,
     start: `/0/@children.${sourceIndex}/@anchors.0`,
     end: `${shapeRef}/@anchors.0`,
@@ -2764,9 +3113,14 @@ function createConnectedGateway(text, request) {
   const eol = text.includes('\r\n') ? '\r\n' : '\n';
   const logicalGateway = `  <bpmn2:BpmnGateway id="${gatewayId}" name="Exclusivo" incoming="${flowId}" type="120" condition="&lt;list/>"/>`;
   const logicalFlow = `  <bpmn2:SequenceFlow id="${flowId}" name="" sourceRef="${sourceId}" targetRef="${gatewayId}" atividadeFluxo=""/>`;
+  const connectionInsertionOffset = diagramInsertionOffset(model, 'connections');
   const patches = [
     { start: lastShape.closeEnd, end: lastShape.closeEnd, value: `${eol}    ${gatewayShapeXml}` },
-    { start: lastConnection.closeEnd, end: lastConnection.closeEnd, value: `${eol}    ${connectionXml}` },
+    {
+      start: connectionInsertionOffset,
+      end: connectionInsertionOffset,
+      value: `${visualConnections.length ? `${eol}    ` : ''}${connectionXml}${eol}    `
+    },
     { start: xmiRoot.closeStart, end: xmiRoot.closeStart, value: `${logicalGateway}${eol}${logicalFlow}${eol}` }
   ];
   patchAttribute(text, source.node, 'outgoing', appendReference(source.attributes.outgoing, flowId), patches, { required: true });
@@ -2826,12 +3180,18 @@ function createConnectedIntermediateEvent(text, request) {
   }
 
   const visualConnections = model.diagram.children.filter((node) => node.localName === 'connections');
-  const connectionTemplate = findRegularConnectionTemplate(model);
-  const eventTemplate = findIntermediateEventTemplate(model, diagramShapes);
+  const connectionTemplateSource = resolveCreationTemplate(
+    text,
+    model,
+    request,
+    (candidateModel) => findRegularConnectionTemplate(candidateModel)
+  );
+  const eventTemplateSource = resolveCreationTemplate(text, model, request, findIntermediateEventTemplate);
+  const connectionTemplate = connectionTemplateSource?.template;
+  const eventTemplate = eventTemplateSource?.template;
   const lastShape = diagramShapes.at(-1);
-  const lastConnection = visualConnections.at(-1);
   const xmiRoot = model.xml.children.find((node) => node.name === 'xmi:XMI');
-  if (!connectionTemplate || !eventTemplate || !lastShape || !lastConnection || !xmiRoot) {
+  if (!connectionTemplate || !eventTemplate || !lastShape || !xmiRoot) {
     throw new Error('O diagrama não possui templates visuais seguros para criar evento intermediário e fluxo.');
   }
   const templateAnchors = eventTemplate.node.children.filter((node) => node.localName === 'anchors');
@@ -2848,7 +3208,7 @@ function createConnectedIntermediateEvent(text, request) {
   const connectionIndex = visualConnections.length;
   const shapeRef = `/0/@children.${shapeIndex}`;
   const connectionRef = `/0/@connections.${connectionIndex}`;
-  const eventShapeXml = cloneIntermediateEventShape(text, eventTemplate, {
+  const eventShapeXml = cloneIntermediateEventShape(eventTemplateSource.text, eventTemplate, {
     eventId,
     shapeRef,
     connectionRef,
@@ -2856,7 +3216,7 @@ function createConnectedIntermediateEvent(text, request) {
     y
   });
   const bendpoints = normalizeLayoutBendpoints(request?.bendpoints ?? [], flowId);
-  const connectionXml = cloneRegularConnection(text, connectionTemplate, {
+  const connectionXml = cloneRegularConnection(connectionTemplateSource.text, connectionTemplate, {
     flowId,
     start: `/0/@children.${sourceIndex}/@anchors.0`,
     end: `${shapeRef}/@anchors.0`,
@@ -2866,9 +3226,14 @@ function createConnectedIntermediateEvent(text, request) {
   const name = encodeXmlAttribute('Intermediário');
   const logicalEvent = `  <bpmn2:BpmnIntermediateEvent id="${eventId}" name="${name}" incoming="${flowId}" type="30" sequenceAttached="0" signalId="0"/>`;
   const logicalFlow = `  <bpmn2:SequenceFlow id="${flowId}" name="" sourceRef="${sourceId}" targetRef="${eventId}" atividadeFluxo=""/>`;
+  const connectionInsertionOffset = diagramInsertionOffset(model, 'connections');
   const patches = [
     { start: lastShape.closeEnd, end: lastShape.closeEnd, value: `${eol}    ${eventShapeXml}` },
-    { start: lastConnection.closeEnd, end: lastConnection.closeEnd, value: `${eol}    ${connectionXml}` },
+    {
+      start: connectionInsertionOffset,
+      end: connectionInsertionOffset,
+      value: `${visualConnections.length ? `${eol}    ` : ''}${connectionXml}${eol}    `
+    },
     { start: xmiRoot.closeStart, end: xmiRoot.closeStart, value: `${logicalEvent}${eol}${logicalFlow}${eol}` }
   ];
   patchAttribute(text, source.node, 'outgoing', appendReference(source.attributes.outgoing, flowId), patches, { required: true });
@@ -2928,12 +3293,18 @@ function createConnectedEndEvent(text, request) {
   }
 
   const visualConnections = model.diagram.children.filter((node) => node.localName === 'connections');
-  const connectionTemplate = findRegularConnectionTemplate(model);
-  const eventTemplate = findEndEventTemplate(model, diagramShapes);
+  const connectionTemplateSource = resolveCreationTemplate(
+    text,
+    model,
+    request,
+    (candidateModel) => findRegularConnectionTemplate(candidateModel)
+  );
+  const eventTemplateSource = resolveCreationTemplate(text, model, request, findEndEventTemplate);
+  const connectionTemplate = connectionTemplateSource?.template;
+  const eventTemplate = eventTemplateSource?.template;
   const lastShape = diagramShapes.at(-1);
-  const lastConnection = visualConnections.at(-1);
   const xmiRoot = model.xml.children.find((node) => node.name === 'xmi:XMI');
-  if (!connectionTemplate || !eventTemplate || !lastShape || !lastConnection || !xmiRoot) {
+  if (!connectionTemplate || !eventTemplate || !lastShape || !xmiRoot) {
     throw new Error('O diagrama não possui templates visuais seguros para criar evento final e fluxo.');
   }
   const templateAnchors = eventTemplate.node.children.filter((node) => node.localName === 'anchors');
@@ -2950,7 +3321,7 @@ function createConnectedEndEvent(text, request) {
   const connectionIndex = visualConnections.length;
   const shapeRef = `/0/@children.${shapeIndex}`;
   const connectionRef = `/0/@connections.${connectionIndex}`;
-  const eventShapeXml = cloneEndEventShape(text, eventTemplate, {
+  const eventShapeXml = cloneEndEventShape(eventTemplateSource.text, eventTemplate, {
     eventId,
     shapeRef,
     connectionRef,
@@ -2958,7 +3329,7 @@ function createConnectedEndEvent(text, request) {
     y
   });
   const bendpoints = normalizeLayoutBendpoints(request?.bendpoints ?? [], flowId);
-  const connectionXml = cloneRegularConnection(text, connectionTemplate, {
+  const connectionXml = cloneRegularConnection(connectionTemplateSource.text, connectionTemplate, {
     flowId,
     start: `/0/@children.${sourceIndex}/@anchors.0`,
     end: `${shapeRef}/@anchors.0`,
@@ -2967,9 +3338,14 @@ function createConnectedEndEvent(text, request) {
   const eol = text.includes('\r\n') ? '\r\n' : '\n';
   const logicalEvent = `  <bpmn2:BpmnEndEvent id="${eventId}" name="Fim" incoming="${flowId}" type="60" signalId="0"/>`;
   const logicalFlow = `  <bpmn2:SequenceFlow id="${flowId}" name="" sourceRef="${sourceId}" targetRef="${eventId}" atividadeFluxo=""/>`;
+  const connectionInsertionOffset = diagramInsertionOffset(model, 'connections');
   const patches = [
     { start: lastShape.closeEnd, end: lastShape.closeEnd, value: `${eol}    ${eventShapeXml}` },
-    { start: lastConnection.closeEnd, end: lastConnection.closeEnd, value: `${eol}    ${connectionXml}` },
+    {
+      start: connectionInsertionOffset,
+      end: connectionInsertionOffset,
+      value: `${visualConnections.length ? `${eol}    ` : ''}${connectionXml}${eol}    `
+    },
     { start: xmiRoot.closeStart, end: xmiRoot.closeStart, value: `${logicalEvent}${eol}${logicalFlow}${eol}` }
   ];
   patchAttribute(text, source.node, 'outgoing', appendReference(source.attributes.outgoing, flowId), patches, { required: true });
@@ -3126,6 +3502,16 @@ function validateConnectionEndpoints(source, target, model) {
   if (!source) throw new Error('Elemento de origem não encontrado.');
   if (!target) throw new Error('Elemento de destino não encontrado.');
   if (source.id === target.id) throw new Error('Um fluxo não pode ligar o elemento a ele mesmo.');
+  const documentaryArtifacts = new Set(['BpmnAnnotation', 'BpmnDatabase', 'BpmnDocument']);
+  if (documentaryArtifacts.has(source.tag)) {
+    if (!['BpmnTask', 'BpmnSubProcess'].includes(target.tag)) {
+      throw new Error(`${source.typeLabel} somente pode criar uma associação visual com uma atividade ou subprocesso.`);
+    }
+    if (!model.shapeById.has(source.id) || !model.shapeById.has(target.id)) {
+      throw new Error('Origem ou destino não possui representação visual.');
+    }
+    return;
+  }
   const sourceTags = new Set(['BpmnStartEvent', 'BpmnTask', 'BpmnSubProcess', 'BpmnGateway', 'BpmnIntermediateEvent']);
   const targetTags = new Set(['BpmnTask', 'BpmnSubProcess', 'BpmnGateway', 'BpmnIntermediateEvent', 'BpmnEndEvent']);
   if (!sourceTags.has(source.tag)) throw new Error(`${source.typeLabel} não pode iniciar um fluxo executável.`);
@@ -3253,6 +3639,36 @@ function findSwimLaneTemplate(model, nested) {
     .map((element) => model.shapeById.get(element.id))
     .filter((shape) => shape?.node && shape.graphicsNode?.attributeMap['xsi:type']?.value === 'al:Rectangle');
   return candidates.find((shape) => Boolean(shape.parentBusinessObject) === nested) ?? candidates[0];
+}
+
+/**
+ * Resolve um molde visual no documento atual ou, quando o ultimo exemplar foi
+ * excluido, no catalogo interno fornecido pelo host da extensao.
+ *
+ * O texto de fallback nunca e gravado no processo. Somente o shape escolhido e
+ * clonado, preservando o restante do arquivo do usuario.
+ */
+function resolveCreationTemplate(text, model, request, finder) {
+  const diagramShapes = model.diagram?.children.filter((node) => node.localName === 'children') ?? [];
+  const localTemplate = finder(model, diagramShapes);
+  if (localTemplate) return { text, model, template: localTemplate };
+
+  const fallbackText = String(request?.templateText ?? '');
+  if (!fallbackText) return null;
+  const fallbackModel = parseProcess(fallbackText);
+  const fallbackShapes = fallbackModel.diagram?.children.filter((node) => node.localName === 'children') ?? [];
+  const fallbackTemplate = finder(fallbackModel, fallbackShapes);
+  return fallbackTemplate ? { text: fallbackText, model: fallbackModel, template: fallbackTemplate } : null;
+}
+
+function diagramInsertionOffset(model, kind) {
+  const nodes = model.diagram?.children ?? [];
+  const matching = nodes.filter((node) => node.localName === kind);
+  if (matching.length) return matching.at(-1).closeEnd;
+  const order = kind === 'children'
+    ? ['connections', 'styles', 'fonts', 'colors']
+    : ['styles', 'fonts', 'colors'];
+  return nodes.find((node) => order.includes(node.localName))?.start ?? model.diagram?.closeStart;
 }
 
 function preferredBusinessPrefix(model, tag, fallback) {
@@ -3705,6 +4121,32 @@ function remapChildReferences(value, deletedIndex) {
       if (index > deletedIndex) {
         changed = true;
         return `/0/@children.${index - 1}`;
+      }
+      return match;
+    });
+    if (!removeToken) mapped.push(next);
+  }
+  return { changed, value: mapped.join(' ') };
+}
+
+function remapNestedChildReferences(value, poolIndex, deletedIndex) {
+  let changed = false;
+  const mapped = [];
+  const prefix = `/0/@children.${poolIndex}/@children.`;
+  const escaped = prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const pattern = new RegExp(`${escaped}(\\d+)`, 'g');
+  for (const token of splitReferences(value)) {
+    let removeToken = false;
+    const next = token.replace(pattern, (match, digits) => {
+      const index = Number(digits);
+      if (index === deletedIndex) {
+        changed = true;
+        removeToken = true;
+        return match;
+      }
+      if (index > deletedIndex) {
+        changed = true;
+        return `${prefix}${index - 1}`;
       }
       return match;
     });
@@ -4166,11 +4608,14 @@ module.exports = {
   deleteIsolatedGateway,
   deleteIsolatedSubProcess,
   deleteIsolatedTask,
+  deleteDiagramContainer,
+  deleteDiagramElements,
   deleteSequenceFlow,
   patchLayout,
   patchProcessForm,
   patchProcessAttachmentSecurity,
   patchProcessGeneral,
+  patchProcessIdentity,
   patchProcessVersion,
   patchProcessManager,
   patchEventInitializer,

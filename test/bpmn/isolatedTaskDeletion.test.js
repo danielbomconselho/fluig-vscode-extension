@@ -9,6 +9,7 @@ const {
   createConnectedGateway,
   createConnectedTask,
   createSequenceFlow,
+  deleteDiagramElements,
   deleteIsolatedTask,
   patchGatewayBranches
 } = require('../../src/bpmn/processPatcher');
@@ -136,10 +137,33 @@ test('exclui atividade conectada e remove atomicamente os fluxos de entrada e sa
   assert.equal(result.model.fingerprint.lineEnding, 'CRLF');
 });
 
-test('recusa atividade condicionada, ramo padrão, evento, script, referência externa, tipo inválido e arquivo inválido', () => {
+test('exclui atividade com scriptFileName e informa o script vinculado', () => {
+  const entry = isolatedTask('87', 'scripttask');
+  const scripted = entry.text.replace(
+    `<bpmn2:BpmnTask id="${entry.id}"`,
+    `<bpmn2:BpmnTask id="${entry.id}" scriptFileName="toexportbpmnteste.${entry.id}.js"`
+  );
+  const result = deleteIsolatedTask(scripted, entry.id);
+  assert.equal(result.scriptFileName, `toexportbpmnteste.${entry.id}.js`);
+  assert.equal(result.model.elements.some((item) => item.id === entry.id), false);
+  assert.equal(result.validation.ok, true);
+});
+
+test('exclui múltiplos elementos e seus fluxos incidentes em uma única transformação', () => {
+  const created = createConnectedTask(fixture, { sourceId: 'startsignal13', x: 900, y: 620 });
+  const result = deleteDiagramElements(created.text, ['mailtask31', created.taskId]);
+  assert.deepEqual(new Set(result.elementIds), new Set(['mailtask31', created.taskId]));
+  assert.equal(result.model.elements.some((item) => item.id === 'mailtask31'), false);
+  assert.equal(result.model.elements.some((item) => item.id === created.taskId), false);
+  assert.ok(result.removedFlowIds.includes(created.flowId));
+  assert.equal(result.patches.length, 1);
+  assert.equal(result.validation.ok, true);
+});
+
+test('recusa atividade condicionada, ramo padrão, evento, script compartilhado, referência externa, tipo inválido e arquivo inválido', () => {
   assert.throws(() => deleteIsolatedTask(fixture, 'task5'), /ainda é referenciado/);
   assert.throws(() => deleteIsolatedTask(fixture, 'servicetask44'), /possui evento anexado/);
-  assert.throws(() => deleteIsolatedTask(fixture, 'scripttask34'), /possui scriptFileName/);
+  assert.throws(() => deleteIsolatedTask(fixture, 'scripttask34'), /ainda é referenciado/);
   assert.throws(() => deleteIsolatedTask(fixture, 'intermediateevent22'), /somente atividades comuns/);
   assert.throws(() => deleteIsolatedTask(fixture, 'task999'), /não encontrado ou duplicado/);
 

@@ -5,7 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { parseProcess } = require('../../src/bpmn/processModel');
-const { patchProcessGeneral, patchProcess } = require('../../src/bpmn/processPatcher');
+const { patchProcessGeneral, patchProcessIdentity, patchProcess } = require('../../src/bpmn/processPatcher');
 const { processGeneralDefinition } = require('../../src/bpmn/processGeneral');
 
 const fixture = fs.readFileSync(
@@ -75,6 +75,19 @@ test('edita codigo, servidor e propriedades gerais sem alterar fluxos, ASCII ou 
   assert.equal(result.text.includes('\r\n'), true);
   assert.equal(/[^\x00-\x7F]/.test(result.text), false);
   assert.match(result.text, /Processo de a&#xe7;&#xe3;o/);
+});
+
+test('renomeia somente a identidade interna e mantem o diagrama estruturalmente valido', () => {
+  const result = patchProcessIdentity(fixture, 'toexportbpmnteste', 'processo_viagem');
+  assert.equal(result.model.process.id, 'processo_viagem');
+  assert.equal(result.model.diagram.attributeMap.name.value, 'processo_viagem');
+  assert.equal(result.validation.ok, true);
+  assert.equal(result.model.flows.length, parseProcess(fixture).flows.length);
+  assert.equal(patchProcessIdentity(result.text, 'processo_viagem', 'processo_viagem').changed, false);
+  assert.throws(
+    () => patchProcessIdentity(fixture, 'toexportbpmnteste', 'TOEXPORTBPMNTESTE'),
+    /maiusculas e minusculas/
+  );
 });
 
 test('remove prazos zerados e recusa duracao invalida', () => {

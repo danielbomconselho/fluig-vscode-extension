@@ -7,6 +7,7 @@ const path = require('node:path');
 const { parseProcess } = require('../../src/bpmn/processModel');
 const { createSequenceFlow } = require('../../src/bpmn/processPatcher');
 const { validateProcess } = require('../../src/bpmn/processValidator');
+const { toWebviewData } = require('../../src/bpmn/webviewData');
 
 const fixture = fs.readFileSync(
   path.join(__dirname, 'fixtures', 'project', 'workflow', 'diagrams', 'toexportbpmnteste.process'),
@@ -55,6 +56,33 @@ test('recusa fluxo duplicado e extremidades semanticamente inválidas', () => {
   assert.throws(
     () => createSequenceFlow(fixture, { sourceId: 'servicetask11', targetId: 'startevent4' }),
     /não pode receber/
+  );
+});
+
+test('cria associação documental pontilhada usando a tripla compatível com o Studio', () => {
+  const result = createSequenceFlow(fixture, {
+    sourceId: 'annotationtask7',
+    targetId: 'mailtask31',
+    bendpoints: [{ x: 610, y: 420 }]
+  });
+  const flow = result.model.flows.find((item) => item.id === result.flowId);
+  const source = result.model.elements.find((item) => item.id === 'annotationtask7');
+  const target = result.model.elements.find((item) => item.id === 'mailtask31');
+  const view = toWebviewData(result.model, result.validation);
+  const visualFlow = view.elements.find((item) => item.id === result.flowId);
+  const visualTarget = view.elements.find((item) => item.id === 'mailtask31');
+
+  assert.equal(result.documentaryAssociation, true);
+  assert.equal(flow.attributes.sourceRef, 'annotationtask7');
+  assert.equal(flow.attributes.targetRef, 'mailtask31');
+  assert.ok(source.attributes.outgoing.split(/\s+/).includes(result.flowId));
+  assert.ok(target.attributes.incoming.split(/\s+/).includes(result.flowId));
+  assert.deepEqual(visualFlow.editableProperties.map((property) => property.name), ['name']);
+  assert.ok(visualTarget.configurationIssues.includes('Elemento sem fluxo de entrada.'));
+  assert.equal(result.validation.ok, true);
+  assert.throws(
+    () => createSequenceFlow(fixture, { sourceId: 'annotationtask7', targetId: 'exclusivegateway39' }),
+    /somente pode criar uma associação visual/
   );
 });
 

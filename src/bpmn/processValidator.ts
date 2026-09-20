@@ -51,6 +51,9 @@ function validateProcess(model) {
     if (element.tag === 'BpmnProcess') continue;
     if (!element.shape) add(findings, 'warning', 'LINK-002', `${element.id} não possui shape visual.`, element.id);
     if (element.tag === 'BpmnGateway') validateGatewayConditions(element, byId, findings);
+    if (element.tag === 'BpmnIntermediateEvent' && element.type === '36') {
+      validateIntermediateLink(element, byId, findings);
+    }
   }
 
   if (model.process && model.diagram) {
@@ -61,6 +64,18 @@ function validateProcess(model) {
   }
 
   return result(findings);
+}
+
+function validateIntermediateLink(element, byId, findings) {
+  const linkId = String(element.attributes.linkId ?? '').trim();
+  if (!linkId || linkId === '0') {
+    add(findings, 'warning', 'EVENT-LINK-001', `${element.id} não possui evento receptor de link configurado.`, element.id);
+    return;
+  }
+  const receiver = byId.get(linkId);
+  if (receiver?.tag !== 'BpmnIntermediateEvent' || receiver?.type !== '42') {
+    add(findings, 'warning', 'EVENT-LINK-002', `${element.id} aponta para um receptor de link inválido: ${linkId}.`, element.id);
+  }
 }
 
 function validateGatewayConditions(gateway, byId, findings) {

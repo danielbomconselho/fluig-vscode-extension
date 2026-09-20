@@ -26,16 +26,38 @@ class BackupService {
    * @param {import('vscode').TextDocument} document
    */
   async createBackup(vscode, document) {
-    const workspaceFolder = vscode.workspace.getWorkspaceFolder(document.uri);
-    const root = workspaceFolder?.uri ?? vscode.Uri.joinPath(document.uri, '..');
-    const configured = vscode.workspace.getConfiguration('fluiggers', document.uri)
+    const bytes = new TextEncoder().encode(document.getText());
+    const fileName = document.uri.path.split('/').pop() || 'processo.process';
+    return this.writeBackup(vscode, document, fileName, bytes);
+  }
+
+  /**
+   * Cria uma copia recuperavel de um arquivo relacionado antes de remove-lo.
+   * @param {typeof import('vscode')} vscode
+   * @param {import('vscode').TextDocument} ownerDocument
+   * @param {import('vscode').Uri} fileUri
+   */
+  async createRelatedFileBackup(vscode, ownerDocument, fileUri) {
+    const bytes = await vscode.workspace.fs.readFile(fileUri);
+    const fileName = fileUri.path.split('/').pop() || 'arquivo.bak';
+    return this.writeBackup(vscode, ownerDocument, fileName, bytes);
+  }
+
+  /**
+   * @param {typeof import('vscode')} vscode
+   * @param {import('vscode').TextDocument} ownerDocument
+   * @param {string} fileName
+   * @param {Uint8Array} bytes
+   */
+  async writeBackup(vscode, ownerDocument, fileName, bytes) {
+    const workspaceFolder = vscode.workspace.getWorkspaceFolder(ownerDocument.uri);
+    const root = workspaceFolder?.uri ?? vscode.Uri.joinPath(ownerDocument.uri, '..');
+    const configured = vscode.workspace.getConfiguration('fluiggers', ownerDocument.uri)
       .get('bpmnBackupDirectory', '.fluig-bpmn/backups');
     const segments = normalizeRelativeDirectory(configured);
     const backupDirectory = vscode.Uri.joinPath(root, ...segments);
     await vscode.workspace.fs.createDirectory(backupDirectory);
 
-    const bytes = new TextEncoder().encode(document.getText());
-    const fileName = document.uri.path.split('/').pop() || 'processo.process';
     const backupName = createBackupName(fileName, bytes, new Date());
     const backupUri = vscode.Uri.joinPath(backupDirectory, backupName);
     await vscode.workspace.fs.writeFile(backupUri, bytes);

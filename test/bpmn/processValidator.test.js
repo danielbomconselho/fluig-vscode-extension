@@ -44,3 +44,15 @@ test('validador recusa fluxo padrão fora de gateway exclusivo ou inclusivo', ()
   assert.equal(report.ok, false);
   assert.ok(report.errors.some((item) => item.code === 'COND-007'));
 });
+
+test('validador sinaliza intermediate link sem receptor ou com destino incompatível', () => {
+  const missing = fixture.replace(' linkId="intermediatelinkreceive29"', '');
+  const missingReport = validateProcess(parseProcess(missing));
+  assert.equal(missingReport.ok, true);
+  assert.ok(missingReport.warnings.some((item) => item.code === 'EVENT-LINK-001'));
+
+  const invalid = fixture.replace('linkId="intermediatelinkreceive29"', 'linkId="intermediateevent22"');
+  const invalidReport = validateProcess(parseProcess(invalid));
+  assert.equal(invalidReport.ok, true);
+  assert.ok(invalidReport.warnings.some((item) => item.code === 'EVENT-LINK-002'));
+});

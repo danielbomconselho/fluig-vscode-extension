@@ -279,6 +279,25 @@ test('serializa modelo seguro para a webview', () => {
   assert.doesNotThrow(() => JSON.stringify(data));
 });
 
+test('mapeia intermediate link para um seletor de eventos receptores', () => {
+  const text = fs.readFileSync(path.join(__dirname, 'fixtures', 'project', 'workflow', 'diagrams', 'toexportbpmnteste.process'), 'ascii');
+  const model = parseProcess(text);
+  const data = toWebviewData(model, validateProcess(model));
+  const sender = data.elements.find((element) => element.id === 'intermediatelink26');
+  const property = sender.editableProperties.find((item) => item.name === 'linkId');
+
+  assert.equal(property.kind, 'select');
+  assert.equal(property.value, 'intermediatelinkreceive29');
+  assert.deepEqual(property.options.map((item) => item.value), ['', 'intermediatelinkreceive29']);
+  assert.match(property.options[1].label, /^intermediatelinkreceive29 - /);
+  assert.equal(sender.configurationIssues.some((issue) => issue.includes('receptor')), false);
+  assert.equal(
+    data.elements.find((element) => element.id === 'intermediatelinkreceive29')
+      .editableProperties.some((item) => item.name === 'linkId'),
+    false
+  );
+});
+
 function assertPointOnRectangle(point, shape) {
   const dx = Math.abs(point.x - (shape.x + (shape.width / 2))) / (shape.width / 2);
   const dy = Math.abs(point.y - (shape.y + (shape.height / 2))) / (shape.height / 2);

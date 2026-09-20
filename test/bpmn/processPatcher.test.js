@@ -25,6 +25,32 @@ test('mantem propriedades de esforco somente para leitura em todos os elementos'
   assert.equal(task.attributes.esforcoPrevisto, '563.0');
 });
 
+test('vincula intermediate link somente a um evento receptor de link', () => {
+  const removed = patchProcess(fixture, 'intermediatelink26', { linkId: '' });
+  const unlinked = removed.model.elements.find((item) => item.id === 'intermediatelink26');
+  assert.equal(unlinked.attributes.linkId, undefined);
+  assert.ok(removed.validation.warnings.some((item) => item.code === 'EVENT-LINK-001'));
+
+  const restored = patchProcess(removed.text, 'intermediatelink26', {
+    linkId: 'intermediatelinkreceive29'
+  });
+  assert.equal(
+    restored.model.elements.find((item) => item.id === 'intermediatelink26').attributes.linkId,
+    'intermediatelinkreceive29'
+  );
+  assert.equal(restored.validation.findings.some((item) => item.code.startsWith('EVENT-LINK-')), false);
+  assert.match(restored.text, /linkId="intermediatelinkreceive29"/);
+
+  assert.throws(
+    () => patchProcess(fixture, 'intermediatelink26', { linkId: 'intermediateevent22' }),
+    /receptor de link inv/
+  );
+  assert.throws(
+    () => patchProcess(fixture, 'intermediatelinkreceive29', { linkId: 'intermediatelinkreceive29' }),
+    /pode ser editada/
+  );
+});
+
 test('renomeia fluxo e label visual sem perder ASCII/CRLF', () => {
   const result = patchProcess(fixture, 'flow47', { name: 'Fluxo ação 47' });
   const model = parseProcess(result.text);

@@ -1,5 +1,7 @@
 'use strict';
 
+const { normalizeProcessCode } = require('./processIdentity');
+
 function supportsProcessGeneral(element) {
   return element?.tag === 'BpmnProcess';
 }
@@ -46,10 +48,7 @@ function processGeneralDefinition(element, volumeCatalog = [], expedientCatalog 
 
 function normalizeProcessGeneralConfiguration(configuration, catalogs = {}, current = {}) {
   const requested = configuration ?? {};
-  const code = String(requested.code ?? current.id ?? '').trim();
-  if (!/^[A-Za-z_][A-Za-z0-9_.-]*$/.test(code)) {
-    throw new Error('Informe um codigo de processo valido (letras, numeros, ponto, hifen ou sublinhado).');
-  }
+  const code = normalizeProcessCode(requested.code ?? current.id ?? '');
   const description = String(requested.description ?? '').trim();
   if (!description) throw new Error('Informe a descrição do processo.');
   const volume = String(requested.volume ?? '').trim();
