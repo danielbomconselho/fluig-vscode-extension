@@ -6,11 +6,16 @@ import { AttributionMechanismService } from '../services/AttributionMechanismSer
 import { WorkflowService } from '../services/WorkflowService';
 import { WorkflowProcessExportService } from '../services/WorkflowProcessExportService';
 import { WorkflowProcessArtifactService } from '../services/WorkflowProcessArtifactService';
+import { WorkflowProcessScaffoldService } from '../services/WorkflowProcessScaffoldService';
 
 export class WorkflowExtension {
 
     public static activate(context: vscode.ExtensionContext): void {
         WorkflowProcessArtifactService.initialize(context);
+        context.subscriptions.push(vscode.commands.registerCommand(
+            "fluiggers-fluig-vscode-extension.newWorkflowProcess",
+            (folderUri?: vscode.Uri) => WorkflowProcessScaffoldService.create(context, folderUri)
+        ));
         context.subscriptions.push(vscode.commands.registerCommand(
             "fluiggers-fluig-vscode-extension.newWorkflowEvent",
             WorkflowExtension.createWorkflowEvent

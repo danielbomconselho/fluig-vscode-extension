@@ -611,6 +611,16 @@ test('menu de contexto inicia fluxo por arraste e destaca somente destino valido
   assert.match(styles, /\.node\.connection-target > \.body/);
 });
 
+test('clique direito oferece novo fluxo e conclui a conexao ao clicar no destino', () => {
+  const source = fs.readFileSync(path.join(__dirname, '..', '..', 'media', 'bpmn', 'editor.js'), 'utf8');
+  assert.match(source, /addEventListener\('contextmenu', \(event\) => openTaskCreationMenu/);
+  assert.match(source, /label: 'Novo fluxo'/);
+  assert.match(source, /function beginClickConnectionPlacement/);
+  assert.match(source, /clickToPlace: true/);
+  assert.match(source, /function finishClickConnectionPlacement/);
+  assert.match(source, /requestConnectionCreation\(sourceId, targetId, bendpoints\)/);
+});
+
 test('lápis da atividade abre conversão de tipo e envia a escolha ao host', () => {
   const source = fs.readFileSync(path.join(__dirname, '..', '..', 'media', 'bpmn', 'editor.js'), 'utf8');
   const styles = fs.readFileSync(path.join(__dirname, '..', '..', 'media', 'bpmn', 'editor.css'), 'utf8');

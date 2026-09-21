@@ -827,6 +827,9 @@
       }
       group.addEventListener('pointerdown', (event) => beginPointerInteraction(event, element.id));
       group.addEventListener('click', (event) => handleElementClick(event, element.id));
+      if (canStartConnection(element)) {
+        group.addEventListener('contextmenu', (event) => openTaskCreationMenu(event, element, group));
+      }
       group.addEventListener('keydown', (event) => {
         if (event.key === 'Enter') selectElement(element.id, selectionModifier(event));
       });
@@ -1045,7 +1048,7 @@
   function openTaskCreationMenu(event, element, group) {
     event.preventDefault();
     event.stopPropagation();
-    if (state.layoutCommitPending || state.taskPlacement || state.containerPlacement) return;
+    if (state.layoutCommitPending || state.connectionInteraction || state.taskPlacement || state.containerPlacement) return;
     selectElement(element.id);
     closeTaskConversionMenu();
     closeTaskCreationMenu();
@@ -1055,6 +1058,7 @@
     menu.setAttribute('role', 'menu');
     menu.setAttribute('aria-label', `Criar elemento conectado a ${element.name || element.id}`);
     const options = [
+      { kind: 'flow', icon: '→', label: 'Novo fluxo' },
       { kind: 'task', icon: '▭', label: 'Nova atividade' },
       { kind: 'gateway', icon: '◇', label: 'Novo gateway' },
       { kind: 'intermediate-event', icon: '◎', label: 'Novo evento intermediário' },
@@ -1071,7 +1075,10 @@
       label.textContent = option.label;
       button.append(icon, label);
       button.addEventListener('pointerdown', (pointerEvent) => pointerEvent.stopPropagation());
-      button.addEventListener('click', () => beginTaskPlacement(element.id, option.kind));
+      button.addEventListener('click', (clickEvent) => {
+        if (option.kind === 'flow') beginClickConnectionPlacement(clickEvent, element.id);
+        else beginTaskPlacement(element.id, option.kind);
+      });
       menu.append(button);
     }
     document.body.append(menu);
@@ -1793,6 +1800,7 @@
       targetId: '',
       pointerId: event.pointerId,
       captureTarget: event.currentTarget,
+      clickToPlace: false,
       currentPointer: { x: event.clientX, y: event.clientY },
       preview,
       route: null
@@ -1804,9 +1812,40 @@
     scheduleAutoPan();
   }
 
+  function beginClickConnectionPlacement(event, sourceId) {
+    closeTaskCreationMenu();
+    if (state.layoutCommitPending || state.isDragging) return;
+    const source = findElement(sourceId);
+    const sourceShape = findShape(sourceId);
+    if (!canStartConnection(source) || !sourceShape) return;
+    const documentaryAssociation = ['BpmnAnnotation', 'BpmnDatabase', 'BpmnDocument'].includes(source.tag);
+    const preview = svg('path', {
+      class: documentaryAssociation
+        ? 'connection-preview documentary-association-preview'
+        : 'connection-preview',
+      ...(documentaryAssociation ? {} : { 'marker-end': 'url(#arrow)' })
+    });
+    viewport.append(preview);
+    state.connectionInteraction = {
+      sourceId,
+      targetId: '',
+      pointerId: null,
+      captureTarget: null,
+      clickToPlace: true,
+      currentPointer: { x: event.clientX, y: event.clientY },
+      preview,
+      route: null
+    };
+    state.isDragging = true;
+    viewport.querySelector(`.node[data-id="${cssEscape(sourceId)}"]`)?.classList.add('connecting-source');
+    updatePropertiesVisibility();
+    updateConnectionPreview();
+    showToast('Clique na atividade, evento ou gateway de destino. Escape cancela.');
+  }
+
   function trackConnectionInteraction(event) {
     const interaction = state.connectionInteraction;
-    if (!interaction || (event.pointerId !== undefined && event.pointerId !== interaction.pointerId)) return;
+    if (!interaction || (interaction.pointerId !== null && event.pointerId !== undefined && event.pointerId !== interaction.pointerId)) return;
     interaction.currentPointer = { x: event.clientX, y: event.clientY };
     const candidate = document.elementFromPoint(event.clientX, event.clientY)?.closest?.('.node[data-id]');
     const targetId = candidate?.dataset.id || '';
@@ -1818,7 +1857,8 @@
 
   function finishConnectionInteraction(event) {
     const interaction = state.connectionInteraction;
-    if (!interaction || (event?.pointerId !== undefined && event.pointerId !== interaction.pointerId)) return;
+    if (!interaction || (interaction.pointerId !== null && event?.pointerId !== undefined && event.pointerId !== interaction.pointerId)) return;
+    if (interaction.clickToPlace && event?.type === 'pointerup') return;
     const commit = event?.type !== 'pointercancel' && Boolean(interaction.targetId && interaction.route);
     const sourceId = interaction.sourceId;
     const targetId = interaction.targetId;
@@ -1830,6 +1870,29 @@
         : 'Solte a seta sobre uma atividade, evento ou gateway válido.');
       return;
     }
+    requestConnectionCreation(sourceId, targetId, bendpoints);
+  }
+
+  function finishClickConnectionPlacement(targetId) {
+    const interaction = state.connectionInteraction;
+    if (!interaction?.clickToPlace) return false;
+    if (!canReceiveConnection(interaction.sourceId, targetId)) {
+      showToast('Escolha uma atividade, evento ou gateway de destino válido.');
+      return true;
+    }
+    const route = routeNewConnection(interaction.sourceId, targetId);
+    if (!route) {
+      showToast('Não foi possível calcular uma rota segura para o novo fluxo.');
+      return true;
+    }
+    const sourceId = interaction.sourceId;
+    const bendpoints = route.bendpoints.map((point) => ({ x: point.x, y: point.y }));
+    completeConnectionInteraction();
+    requestConnectionCreation(sourceId, targetId, bendpoints);
+    return true;
+  }
+
+  function requestConnectionCreation(sourceId, targetId, bendpoints) {
     state.layoutCommitPending = true;
     renderStatus(state.data);
     vscode.postMessage({
@@ -1852,7 +1915,7 @@
     const interaction = state.connectionInteraction;
     if (!interaction) return;
     cancelAutoPan();
-    interaction.captureTarget?.releasePointerCapture?.(interaction.pointerId);
+    if (interaction.pointerId !== null) interaction.captureTarget?.releasePointerCapture?.(interaction.pointerId);
     interaction.preview?.remove();
     viewport.querySelectorAll('.connecting-source, .connection-target').forEach((node) => {
       node.classList.remove('connecting-source', 'connection-target');
@@ -2125,6 +2188,10 @@
 
   function handleElementClick(event, id) {
     event.stopPropagation();
+    if (finishClickConnectionPlacement(id)) {
+      event.preventDefault();
+      return;
+    }
     if (state.containerPlacement) {
       finishContainerPlacement(event);
       return;
@@ -2145,6 +2212,13 @@
   }
 
   function handleCanvasClick(event) {
+    if (state.connectionInteraction?.clickToPlace) {
+      event.preventDefault();
+      event.stopPropagation();
+      cancelConnectionInteraction();
+      showToast('Criação do fluxo cancelada.');
+      return;
+    }
     if (state.palettePlacement) {
       event.preventDefault();
       event.stopPropagation();
@@ -2785,7 +2859,7 @@
   }
 
   function beginPointerInteraction(event, id) {
-    if (event.button !== 0 || state.taskPlacement || state.containerPlacement || state.palettePlacement || state.activeTool !== 'select') return;
+    if (event.button !== 0 || state.connectionInteraction || state.taskPlacement || state.containerPlacement || state.palettePlacement || state.activeTool !== 'select') return;
     if (!isDraggableElement(id)) return;
     if (!selectionModifier(event) && !state.selectedIds.includes(id)) selectElement(id);
     const dragIds = expandedDragIds(state.selectedIds.filter(isDraggableElement));
