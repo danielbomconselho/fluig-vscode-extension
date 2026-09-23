@@ -457,6 +457,33 @@ function patchProcessForm(text, elementId, requestedConfiguration, catalogs = {}
   return { text: updatedText, changed: updatedText !== text, model: updatedModel, validation, patches: uniquePatches };
 }
 
+function patchProcessServerForm(text, documentId, serverName) {
+  const normalizedId = String(documentId ?? '').trim();
+  if (!/^\d+$/.test(normalizedId)) throw new Error(`documentId de formulário inválido: ${normalizedId || '(vazio)'}.`);
+  const element = parseProcess(text).process;
+  if (!element || !supportsProcessForm(element)) throw new Error('Processo não encontrado.');
+  const attributes = element.attributes;
+  const descriptors = attributes.descriptorFields !== undefined
+    ? descriptorFieldValues(attributes.descriptorFields)
+    : [];
+  const formPatched = patchProcessForm(text, element.id, {
+    source: 'server',
+    cardIndex: normalizedId,
+    uniqueCardVersion: String(attributes.uniquecardversion) === 'true',
+    inheritFormSecurity: String(attributes.inheritFormSecurity) === 'true',
+    descriptorFields: descriptors.map((descriptor) => ({ ...descriptor, cardIndex: normalizedId }))
+  });
+  const model = parseProcess(formPatched.text);
+  const patches = [];
+  patchAttribute(formPatched.text, model.process.node, 'serverId', String(serverName ?? '').trim(), patches, { required: true });
+  const updatedText = applyPatches(formPatched.text, patches);
+  const validation = validateProcess(parseProcess(updatedText));
+  if (!validation.ok) {
+    throw new Error(`O vínculo do formulário foi recusado porque produziria ${validation.errors.length} erro(s) estrutural(is).`);
+  }
+  return { text: updatedText, changed: updatedText !== text };
+}
+
 function patchProcessAttachmentSecurity(text, elementId, requestedConfiguration) {
   const model = parseProcess(text);
   const beforeValidation = validateProcess(model);
@@ -4643,6 +4670,7 @@ module.exports = {
   deleteSequenceFlow,
   patchLayout,
   patchProcessForm,
+  patchProcessServerForm,
   patchProcessAttachmentSecurity,
   patchProcessGeneral,
   patchProcessIdentity,
