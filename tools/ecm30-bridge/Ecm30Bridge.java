@@ -51,9 +51,9 @@ public final class Ecm30Bridge {
         Diagram diagram = find(resource, Diagram.class);
         BpmnProcess process = find(resource, BpmnProcess.class);
 
-        BPMN2ECM30ExportMarshaller marshaller = new BPMN2ECM30ExportMarshaller();
+        BPMN2ECM30ExportMarshaller marshaller = new BPMN2ECM30ExportMarshaller() { @Override protected void addProblemToDiagram(Diagram d, String message, String id) { System.err.println("WARN " + message + (id == null ? "" : " [" + id + "]")); } };
         marshaller.setDiagram(diagram);
-        setPrivateField(marshaller, "fluigServerVersion", Version.parseVersion(serverVersion));
+        setPrivateField(marshaller, BPMN2ECM30ExportMarshaller.class, "fluigServerVersion", Version.parseVersion(serverVersion));
 
         @SuppressWarnings("rawtypes")
         ArrayList elements = marshaller.getListOfElements(process, resource.getContents());
@@ -109,8 +109,8 @@ public final class Ecm30Bridge {
         throw new IllegalStateException("Missing " + type.getSimpleName() + " in " + resource.getURI());
     }
 
-    private static void setPrivateField(Object target, String name, Object value) throws Exception {
-        Field field = target.getClass().getDeclaredField(name);
+    private static void setPrivateField(Object target, Class<?> owner, String name, Object value) throws Exception {
+        Field field = owner.getDeclaredField(name);
         field.setAccessible(true);
         field.set(target, value);
     }
