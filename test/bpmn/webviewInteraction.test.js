@@ -137,6 +137,16 @@ test('eventos iniciais compatíveis escolhem ou removem inicializador do cache',
   assert.match(provider, /patchEventInitializer\(document\.getText\(\), elementId, initializer\)/);
 });
 
+test('início simples edita o mecanismo de atribuição do inicializador', () => {
+  const source = fs.readFileSync(path.join(__dirname, '..', '..', 'media', 'bpmn', 'editor.js'), 'utf8');
+  assert.match(source, /if \(editor\.mechanisms\) \{\s*renderAssignmentEditor\(element, editor, \{\s*sectionClass: 'event-initializer',\s*title: 'Mecanismo de atribuição',[\s\S]*?applyClass: 'event-initializer-apply',\s*request: requestEventInitializerMechanismUpdate/);
+  assert.match(source, /function requestEventInitializerMechanismUpdate\(element, section, applyButtonForInitializer\)/);
+  assert.match(source, /const initializer = \{\s*mechanism: mechanismSelect\.value,\s*mechanismConfiguration: readTaskMechanismConfiguration\(section\)\s*\};/);
+  assert.match(source, /'taskAssignmentEditor',\s*'eventInitializerEditor',/);
+  assert.match(source, /\['processManagerEditor', 'taskAssignmentEditor', 'processAttachmentSecurityEditor', 'eventInitializerEditor'\]/);
+  assert.match(source, /\?\? element\?\.eventInitializerEditor/);
+});
+
 test('atividades comuns editam acompanhamento e atraso em seção dedicada', () => {
   const source = fs.readFileSync(path.join(__dirname, '..', '..', 'media', 'bpmn', 'editor.js'), 'utf8');
   const provider = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'bpmn', 'FluigProcessEditorProvider.ts'), 'utf8');
@@ -830,11 +840,43 @@ test('processo edita codigo, escolhe servidor cadastrado e configura gestor', ()
     provider.indexOf('async refactorSavedProcessIdentity')
   );
   assert.doesNotMatch(applyIdentity, /renameFile\(/);
-  assert.match(applyIdentity, /Salve o \.process para concluir a refatoracao/);
+  // Like Fluig Studio, the rename is completed without a manual save.
+  assert.ok(
+    applyIdentity.indexOf('this.pendingProcessRenames.set(') < applyIdentity.indexOf('await document.save()'),
+    'autosave ocorre depois de registrar a renomeacao aprovada'
+  );
+  const refactor = provider.slice(
+    provider.indexOf('async refactorSavedProcessIdentity'),
+    provider.indexOf('async applyProcessVersionChanges')
+  );
+  assert.match(refactor, /saveRenamedDocuments\(\[processTarget, \.\.\.finalRelated\.map/);
+  const completed = provider.slice(
+    provider.indexOf('handleCompletedProcessRenames(event) {'),
+    provider.indexOf('async discoverRelatedArtifactRenames')
+  );
+  assert.match(completed, /saveRenamedDocuments\(\[file\.newUri, \.\.\.summary\.renamedUris\]\)/);
   assert.match(source, /scripts, literais e artefatos vinculados/);
   const readForm = source.match(/function readForm\(\) \{[\s\S]*?\n  \}/)?.[0] ?? '';
   assert.match(readForm, /querySelectorAll\('\[data-property-name\]'\)/);
   assert.doesNotMatch(readForm, /propertyForm\.elements/);
+});
+
+test('refatoracao ao salvar aguarda a geracao do ECM30 do codigo antigo antes de renomear', () => {
+  const provider = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'bpmn', 'FluigProcessEditorProvider.ts'), 'utf8');
+  const service = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'services', 'WorkflowProcessArtifactService.ts'), 'utf8');
+  const refactor = provider.slice(
+    provider.indexOf('async refactorSavedProcessIdentity'),
+    provider.indexOf('async applyProcessVersionChanges')
+  );
+  const settle = refactor.indexOf('await WorkflowProcessArtifactService.settle(document.uri)');
+  assert.ok(settle > refactor.indexOf("'Refatorar arquivos'"), 'settle ocorre depois da confirmacao');
+  assert.ok(settle < refactor.indexOf('discoverRelatedArtifactRenames', settle), 'artefatos redescobertos depois do settle');
+  assert.ok(settle < refactor.indexOf('new vscode.WorkspaceEdit()'), 'settle ocorre antes do rename');
+  const run = service.slice(service.indexOf('private static async runAutomaticGeneration'));
+  assert.ok(
+    run.indexOf('vscode.workspace.fs.stat(uri)') < run.indexOf('generateForUri(uri, false)'),
+    'geracao automatica ignora .process que ja foi renomeado'
+  );
 });
 
 test('webview invalida cache dos recursos e sempre apresenta Campos no subprocesso comum', () => {

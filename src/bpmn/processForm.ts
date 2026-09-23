@@ -17,7 +17,9 @@ function supportsProcessForm(element) {
 function processFormDefinition(element, localForms = []) {
   if (!supportsProcessForm(element)) return null;
   const attributes = element.attributes ?? {};
-  const source = normalizedSource(attributes.formSource || 'local');
+  // Reading must not block opening the process: an unknown stored source is shown as local.
+  const storedSource = String(attributes.formSource || 'local').trim().toLowerCase();
+  const source = FORM_SOURCES.some((option) => option.value === storedSource) ? storedSource : 'local';
   const cardIndex = String(attributes.cardIndex ?? '').trim();
   const descriptors = descriptorFieldValues(attributes.descriptorFields);
   const forms = normalizedLocalForms(localForms);

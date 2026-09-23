@@ -323,6 +323,16 @@ function writeEcm30Artifact(filePath, content, now = new Date()) {
     return { filePath, backupPath, bytes: content.length };
 }
 
+function writeProcessImageArtifact(filePath, content) {
+    const text = String(content || "");
+    if (!/^\s*(?:<\?xml[^>]*\?>\s*)?<svg(?:\s|>)/.test(text)) {
+        throw new Error("A imagem do processo gerada nao possui raiz <svg>.");
+    }
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(filePath, text, "utf8");
+    return { filePath, bytes: Buffer.byteLength(text) };
+}
+
 module.exports = {
     REQUIRED_BUNDLES,
     assertEcm30,
@@ -339,4 +349,5 @@ module.exports = {
     parseJavaMajorVersion,
     resolveJavaExecutable,
     writeEcm30Artifact,
+    writeProcessImageArtifact,
 };

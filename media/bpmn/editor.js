@@ -387,6 +387,7 @@
       for (const editorName of [
         'gatewayConditionEditor',
         'taskAssignmentEditor',
+        'eventInitializerEditor',
         'processManagerEditor',
         'taskMobileEditor',
         'taskAttachmentRulesEditor'
@@ -491,9 +492,9 @@
     const mechanismCatalog = normalizeCatalogOptions(mechanisms);
     const volumeCatalog = normalizeCatalogOptions(volumes);
     for (const element of data?.elements ?? []) {
-      for (const editorName of ['processManagerEditor', 'taskAssignmentEditor', 'processAttachmentSecurityEditor']) {
+      for (const editorName of ['processManagerEditor', 'taskAssignmentEditor', 'processAttachmentSecurityEditor', 'eventInitializerEditor']) {
         const editor = element[editorName];
-        if (!editor) continue;
+        if (!editor?.mechanisms) continue;
         const usedMechanisms = editor.rules
           ? editor.rules.map((rule) => rule.mechanism)
           : [editor.mechanism];
@@ -559,7 +560,8 @@
     const editor = element?.processManagerEditor
       ?? element?.taskAssignmentEditor
       ?? element?.processAttachmentSecurityEditor
-      ?? element?.gatewayConditionEditor;
+      ?? element?.gatewayConditionEditor
+      ?? element?.eventInitializerEditor;
     const mechanisms = editor?.mechanisms ?? [];
     for (const select of propertyFields.querySelectorAll('.gateway-mechanism-select')) {
       const current = String(select.value ?? '');
@@ -4930,6 +4932,16 @@
   function renderEventInitializerEditor(element) {
     const editor = element.eventInitializerEditor;
     if (!editor) return;
+    if (editor.mechanisms) {
+      renderAssignmentEditor(element, editor, {
+        sectionClass: 'event-initializer',
+        title: 'Mecanismo de atribuição',
+        applyText: 'Aplicar atribuição',
+        applyClass: 'event-initializer-apply',
+        request: requestEventInitializerMechanismUpdate
+      });
+      return;
+    }
     const section = document.createElement('section');
     section.className = 'event-initializer';
     const title = document.createElement('h3');
@@ -6630,6 +6642,20 @@
     showToast(initializer.userId
       ? 'Gravando inicializador no arquivo .process...'
       : 'Removendo inicializador do arquivo .process...');
+  }
+
+  function requestEventInitializerMechanismUpdate(element, section, applyButtonForInitializer) {
+    if (state.layoutCommitPending || state.isDragging) return;
+    const mechanismSelect = section.querySelector('.task-mechanism-select');
+    const initializer = {
+      mechanism: mechanismSelect.value,
+      mechanismConfiguration: readTaskMechanismConfiguration(section)
+    };
+    state.layoutCommitPending = true;
+    applyButtonForInitializer.disabled = true;
+    renderStatus(state.data);
+    vscode.postMessage({ type: 'updateEventInitializer', elementId: element.id, initializer });
+    showToast('Gravando mecanismo de atribuição no arquivo .process...');
   }
 
   function requestTaskNotificationsUpdate(element, section, applyButtonForNotifications) {

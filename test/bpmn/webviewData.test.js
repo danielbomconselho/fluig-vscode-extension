@@ -256,7 +256,12 @@ test('serializa modelo seguro para a webview', () => {
   assert.deepEqual(conditionalInitializerEditor.options, [
     { value: 'daniel.sales', label: 'Daniel Sales (daniel.sales)' }
   ]);
-  assert.equal(data.elements.find((element) => element.id === 'startevent4').eventInitializerEditor, null);
+  const startInitializerEditor = data.elements.find((element) => element.id === 'startevent4').eventInitializerEditor;
+  assert.equal(startInitializerEditor.supported, true);
+  assert.equal(startInitializerEditor.mechanism, 'Grupo');
+  assert.equal(startInitializerEditor.mechanismConfiguration.groupId, 'TODOS');
+  assert.deepEqual(startInitializerEditor.formFields, ['campox', 'aprovador']);
+  assert.equal(startInitializerEditor.mechanisms.some((mechanism) => mechanism.value === 'Grupo'), true);
   const taskNotificationsEditor = data.elements.find((element) => element.id === 'task5').taskNotificationsEditor;
   assert.equal(taskNotificationsEditor.notifyResponsible, false);
   assert.equal(taskNotificationsEditor.lateResponsible, false);
@@ -291,11 +296,13 @@ test('mapeia intermediate link para um seletor de eventos receptores', () => {
   assert.deepEqual(property.options.map((item) => item.value), ['', 'intermediatelinkreceive29']);
   assert.match(property.options[1].label, /^intermediatelinkreceive29 - /);
   assert.equal(sender.configurationIssues.some((issue) => issue.includes('receptor')), false);
+  const receiver = data.elements.find((element) => element.id === 'intermediatelinkreceive29');
   assert.equal(
-    data.elements.find((element) => element.id === 'intermediatelinkreceive29')
-      .editableProperties.some((item) => item.name === 'linkId'),
+    receiver.editableProperties.some((item) => item.name === 'linkId'),
     false
   );
+  assert.equal(sender.configurationIssues.includes('Elemento sem fluxo de saída.'), false);
+  assert.equal(receiver.configurationIssues.includes('Elemento sem fluxo de entrada.'), false);
 });
 
 function assertPointOnRectangle(point, shape) {

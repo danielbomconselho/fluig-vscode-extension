@@ -1,6 +1,7 @@
 'use strict';
 
 const path = require('node:path');
+const { LOCALES } = require('./translationService');
 
 const PROCESS_CODE_PATTERN = /^[A-Za-z0-9_][A-Za-z0-9_.-]*$/;
 const RESOURCE_SUFFIXES = ['.ecm30.xml', '.png', '.svg', '.processimage.svg'];
@@ -36,10 +37,12 @@ function renamedArtifactName(kind, fileName, currentCode, requestedCode) {
   const name = String(fileName ?? '');
   if (!name || current === requested) return null;
 
-  if (kind === 'scripts' && name.startsWith(`${current}.`) && name.toLowerCase().endsWith('.js')) {
+  // Scripts are "<code>.<event>.js"; a longer dotted prefix belongs to another process code.
+  if (kind === 'scripts' && name.startsWith(`${current}.`) && name.toLowerCase().endsWith('.js')
+    && !name.slice(current.length + 1, -'.js'.length).includes('.')) {
     return `${requested}${name.slice(current.length)}`;
   }
-  if (kind === 'literals' && name.startsWith(`${current}_`) && name.toLowerCase().endsWith('.properties')) {
+  if (kind === 'literals' && LOCALES.some((locale) => name === `${current}_${locale}.properties`)) {
     return `${requested}${name.slice(current.length)}`;
   }
   if (kind === 'resources' && name.startsWith(`${current}.`)) {

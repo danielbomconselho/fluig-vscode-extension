@@ -36,6 +36,9 @@ test('interpreta operadores e múltiplas regras dos snapshots Eclipse', () => {
     { operator: '3', amount: 1, name: 'segundo.pdf', message: 'Segunda regra de anexo' }
   ]);
   assert.equal(task(69).attributes.attachmentRules, undefined);
+  // Fluig Studio also saves rules with id 0 (not renumbered), which must still open.
+  const studioIds = task(67).attributes.attachmentRules.replace('<id>1</id>', '<id>0</id>');
+  assert.equal(attachmentRuleValues(studioIds).length, 2);
 });
 
 test('expõe catálogo dos sete operadores e campos do formulário', () => {
@@ -80,7 +83,7 @@ test('cria, renumera e remove regras sem alterar a estrutura do processo', () =>
 test('recusa quantidade, operador, estrutura e elemento incompatíveis', () => {
   assert.throws(() => patchTaskAttachmentRules(reference(57), 'task5', [{ operator: '1', amount: '-1' }]), /Quantidade inválida/);
   assert.throws(() => patchTaskAttachmentRules(reference(57), 'task5', [{ operator: '9', amount: '1' }]), /Operador inválido/);
-  assert.throws(() => patchTaskAttachmentRules(reference(58).replace('&lt;id>1&lt;/id>', '&lt;id>2&lt;/id>'), 'task5', []), /id fora da sequência/);
+  assert.throws(() => patchTaskAttachmentRules(reference(58).replace('&lt;id>1&lt;/id>', '&lt;id>x&lt;/id>'), 'task5', []), /id inválido/);
   assert.throws(() => patchTaskAttachmentRules(reference(58), 'servicetask11', []), /não aceita regras de anexo/);
   assert.throws(() => patchTaskAttachmentRules(reference(58), 'usertask30', []), /não aceita regras de anexo/);
 });

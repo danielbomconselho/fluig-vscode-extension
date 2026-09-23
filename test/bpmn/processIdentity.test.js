@@ -42,3 +42,18 @@ test('renomeia somente scripts, literais e artefatos diretos pertencentes ao pro
   assert.equal(renamedArtifactName('literals', 'processo_backup.txt', 'processo', 'novo'), null);
   assert.equal(renamedArtifactName('resources', 'processo.cache', 'processo', 'novo'), null);
 });
+
+test('nao renomeia artefatos de outro processo cujo codigo comeca com o codigo atual', () => {
+  const cases = [
+    ['scripts', 'compras.v2.beforeTaskSave.js', null],
+    ['scripts', 'compras.beforeTaskSave.js', 'novo.beforeTaskSave.js'],
+    ['literals', 'compras_ti_pt_BR.properties', null],
+    ['literals', 'compras_ti_es.properties', null],
+    ['literals', 'compras_es.properties', 'novo_es.properties'],
+    ['literals', 'compras_en_US.properties', 'novo_en_US.properties'],
+    ['resources', 'compras.v2.ecm30.xml', null]
+  ];
+  for (const [kind, fileName, expected] of cases) {
+    assert.equal(renamedArtifactName(kind, fileName, 'compras', 'novo'), expected, `${kind} ${fileName}`);
+  }
+});

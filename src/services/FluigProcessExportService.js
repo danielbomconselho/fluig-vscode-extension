@@ -113,9 +113,19 @@ function assertGeneratedArtifactsFresh(processPath, ecm30Path, svgPath) {
         );
     }
 
+    requiredString(svgPath, "Caminho da imagem do processo (processimage.svg)");
+    if (!fs.existsSync(svgPath) || !fs.statSync(svgPath).isFile()) {
+        throw new Error(
+            `A imagem do processo (processimage.svg) ainda nao foi gerada para ${path.basename(processPath)}. ` +
+            "Gere os artefatos de runtime antes de exportar."
+        );
+    }
+
     const processStat = fs.statSync(processPath);
-    const generated = [{ label: "ecm30.xml", filePath: ecm30Path }];
-    if (svgPath) generated.push({ label: "processimage.svg", filePath: svgPath });
+    const generated = [
+        { label: "ecm30.xml", filePath: ecm30Path },
+        { label: "processimage.svg", filePath: svgPath },
+    ];
     for (const artifact of generated) {
         if (!fs.existsSync(artifact.filePath) || !fs.statSync(artifact.filePath).isFile()) {
             throw new Error(`Artefato gerado nao encontrado: ${artifact.filePath}`);
@@ -210,13 +220,10 @@ class FluigProcessExportService {
         const colleagueId = requiredString(server.userCode, "userCode/colleagueId");
         assertGeneratedArtifactsFresh(options.processPath, options.ecm30Path, options.svgPath);
         const ecm30 = loadXmlArtifact(options.ecm30Path, "list");
-        const svg = options.svgPath ? loadXmlArtifact(options.svgPath, "svg") : null;
+        const svg = loadXmlArtifact(options.svgPath, "svg");
         const newProcess = options.newProcess === true;
         const release = options.release !== false;
-        const attachments = [buildAttachment(ecm30, true, false)];
-        if (svg) {
-            attachments.push(buildAttachment(svg, false, true));
-        }
+        const attachments = [buildAttachment(ecm30, true, false), buildAttachment(svg, false, true)];
 
         const operationNames = ["getToken"];
         if (!newProcess) {
@@ -239,7 +246,7 @@ class FluigProcessExportService {
             newProcess,
             release,
             attachments,
-            artifacts: [ecm30, ...(svg ? [svg] : [])].map(artifact => ({
+            artifacts: [ecm30, svg].map(artifact => ({
                 path: artifact.path,
                 fileName: artifact.fileName,
                 root: artifact.root,

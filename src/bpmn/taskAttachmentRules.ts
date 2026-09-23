@@ -46,8 +46,9 @@ function attachmentRuleValues(attachmentRules) {
       const child = directSimpleChild(node, field);
       values[field] = decodeXml(attachmentRules.slice(child.openEnd, child.closeStart));
     }
-    if (values.id !== String(index + 1)) {
-      throw new Error(`Bloco attachmentRules possui id fora da sequência na regra ${index + 1}.`);
+    // Fluig Studio does not keep ids in sequence (e.g. saves 0); serialization renumbers them.
+    if (!/^\d+$/.test(values.id)) {
+      throw new Error(`Bloco attachmentRules possui id inválido na regra ${index + 1}.`);
     }
     if (!OPERATOR_OPTIONS.some((option) => option.value === values.operator)) {
       throw new Error(`Bloco attachmentRules possui operador desconhecido ${values.operator}.`);

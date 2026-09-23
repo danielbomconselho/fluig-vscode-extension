@@ -8,6 +8,7 @@ const { FluigProcessExportService: fluigProcessExportService } = require("./Flui
 const {
     ecm30PathForProcess,
     isWorkflowDiagramProcessPath,
+    processImagePathForProcess,
 } = require("./workflowProcessPath");
 
 interface ExportChoice extends vscode.QuickPickItem {
@@ -152,15 +153,14 @@ export class WorkflowProcessExportService {
         const diagramsFolder = path.dirname(selectedUri.fsPath);
         await WorkflowProcessArtifactService.ensureGenerated(selectedUri);
         const ecm30Path = ecm30PathForProcess(selectedUri.fsPath);
-        const resourcesFolder = path.dirname(ecm30Path);
-        const svgPath = path.join(resourcesFolder, `${processId}.processimage.svg`);
+        const svgPath = processImagePathForProcess(selectedUri.fsPath);
         await vscode.workspace.fs.stat(vscode.Uri.file(ecm30Path));
 
         const options = {
             processId,
             processPath: selectedUri.fsPath,
             ecm30Path,
-            svgPath: await WorkflowProcessExportService.exists(svgPath) ? svgPath : undefined,
+            svgPath,
             newProcess: exportChoice.newProcess,
             release: releaseChoice.release,
         };
@@ -185,15 +185,6 @@ export class WorkflowProcessExportService {
             return;
         }
         return selectedUri;
-    }
-
-    private static async exists(filePath: string): Promise<boolean> {
-        try {
-            await vscode.workspace.fs.stat(vscode.Uri.file(filePath));
-            return true;
-        } catch (_error) {
-            return false;
-        }
     }
 
     private static serverOptions(server: any) {

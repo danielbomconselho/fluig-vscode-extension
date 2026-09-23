@@ -71,6 +71,16 @@ function parseEventTriggerData(trigger) {
   };
 }
 
+// Used to find the conditional script on deletion: a missing or corrupt trigger means no linked script, never a block.
+function triggerScriptConditionFileName(trigger) {
+  if (!trigger) return '';
+  try {
+    return String(parseEventTriggerData(trigger).scriptCondition ?? '').trim();
+  } catch {
+    return '';
+  }
+}
+
 function eventTriggerDefinition(element) {
   if (!supportsEventTrigger(element)) return null;
   try {
@@ -245,5 +255,6 @@ module.exports = {
   normalizeEventTriggerRequest,
   parseEventTriggerData,
   patchEventTriggerData,
-  supportsEventTrigger
+  supportsEventTrigger,
+  triggerScriptConditionFileName
 };

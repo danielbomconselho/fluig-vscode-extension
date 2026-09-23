@@ -40,6 +40,10 @@ test('define a aba de formulário e expõe o limite Fluig de 15 descritores', ()
   assert.equal(editor.cardIndex, 't123');
   assert.equal(editor.maxDescriptorFields, 15);
   assert.deepEqual(editor.localForms, localForms);
+  // An unknown stored formSource must not block opening the process; it is shown as local.
+  const unknownSource = parseProcess(fixture).process;
+  unknownSource.attributes = { ...unknownSource.attributes, formSource: 'form_exemplo' };
+  assert.equal(processFormDefinition(unknownSource, localForms).source, 'local');
 });
 
 test('grava formulário local, flags e descritores sem alterar a estrutura BPMN', () => {

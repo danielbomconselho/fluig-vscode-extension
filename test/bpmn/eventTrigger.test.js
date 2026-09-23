@@ -9,7 +9,8 @@ const { patchEventTrigger } = require('../../src/bpmn/processPatcher');
 const {
   eventTriggerDefinition,
   normalizeEventTriggerRequest,
-  parseEventTriggerData
+  parseEventTriggerData,
+  triggerScriptConditionFileName
 } = require('../../src/bpmn/eventTrigger');
 
 const fixture = fs.readFileSync(
@@ -134,6 +135,19 @@ test('recusa agenda em subtipo incompatível e trigger corrompido', () => {
     }),
     /Bloco trigger inválido/
   );
+});
+
+test('localiza script condicional sem bloquear eventos sem trigger ou com trigger corrompido', () => {
+  const conditional = parseProcess(fixture).elements.find((element) => element.id === 'startconditional16');
+  assert.equal(
+    triggerScriptConditionFileName(conditional.attributes.trigger),
+    parseEventTriggerData(conditional.attributes.trigger).scriptCondition.trim()
+  );
+  assert.equal(triggerScriptConditionFileName(undefined), '');
+  assert.equal(triggerScriptConditionFileName(''), '');
+  assert.equal(triggerScriptConditionFileName('<outraRaiz/>'), '');
+  const provider = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'bpmn', 'FluigProcessEditorProvider.ts'), 'utf8');
+  assert.match(provider, /triggerScriptConditionFileName\(element\.attributes\.trigger\)/);
 });
 
 test('cria o bloco trigger ao configurar evento novo sem agenda materializada', () => {
