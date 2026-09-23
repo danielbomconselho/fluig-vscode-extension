@@ -7,7 +7,11 @@ const { buildGatewayConditionXml, serializeTaskAssignmentConfiguration } = requi
 const { supportsTaskAssignment } = require('./taskAssignment');
 const { supportsProcessManager } = require('./processManager');
 const { patchEventTriggerData, supportsEventTrigger } = require('./eventTrigger');
-const { serializeInitializerConfiguration, supportsEventInitializer } = require('./eventInitializer');
+const {
+  serializeInitializerConfiguration,
+  supportsEventInitializer,
+  supportsInitializerMechanism
+} = require('./eventInitializer');
 const { supportsTaskNotifications } = require('./taskNotifications');
 const { normalizeTaskJointConfiguration, supportsTaskJoint } = require('./taskJoint');
 const {
@@ -600,14 +604,18 @@ function patchEventInitializer(text, elementId, requestedInitializer) {
   if (!element || !supportsEventInitializer(element)) {
     throw new Error(`O elemento ${elementId || '(sem id)'} não aceita inicializador.`);
   }
+  const mechanismInitializer = supportsInitializerMechanism(element);
   const userId = String(requestedInitializer?.userId ?? '').trim();
+  const mechanism = String(requestedInitializer?.mechanism ?? '').trim();
   const patches = [];
-  if (userId) {
+  if (mechanismInitializer ? mechanism : userId) {
     patchAttribute(
       text,
       element.node,
       'initializerConfiguration',
-      serializeInitializerConfiguration(userId),
+      mechanismInitializer
+        ? serializeTaskAssignmentConfiguration(mechanism, requestedInitializer?.mechanismConfiguration ?? null)
+        : serializeInitializerConfiguration(userId),
       patches,
       { required: true }
     );

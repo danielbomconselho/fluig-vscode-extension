@@ -256,7 +256,12 @@ test('serializa modelo seguro para a webview', () => {
   assert.deepEqual(conditionalInitializerEditor.options, [
     { value: 'daniel.sales', label: 'Daniel Sales (daniel.sales)' }
   ]);
-  assert.equal(data.elements.find((element) => element.id === 'startevent4').eventInitializerEditor, null);
+  const startInitializerEditor = data.elements.find((element) => element.id === 'startevent4').eventInitializerEditor;
+  assert.equal(startInitializerEditor.supported, true);
+  assert.equal(startInitializerEditor.mechanism, 'Grupo');
+  assert.equal(startInitializerEditor.mechanismConfiguration.groupId, 'TODOS');
+  assert.deepEqual(startInitializerEditor.formFields, ['campox', 'aprovador']);
+  assert.equal(startInitializerEditor.mechanisms.some((mechanism) => mechanism.value === 'Grupo'), true);
   const taskNotificationsEditor = data.elements.find((element) => element.id === 'task5').taskNotificationsEditor;
   assert.equal(taskNotificationsEditor.notifyResponsible, false);
   assert.equal(taskNotificationsEditor.lateResponsible, false);

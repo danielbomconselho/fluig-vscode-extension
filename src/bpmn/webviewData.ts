@@ -66,7 +66,13 @@ function toWebviewData(model, validation, options = {}) {
       options.mechanismCatalog ?? []
     ),
     eventTriggerEditor: eventTriggerDefinition(element),
-    eventInitializerEditor: eventInitializerDefinition(element, options.userCatalog ?? []),
+    eventInitializerEditor: eventInitializerDefinition(
+      element,
+      options.userCatalog ?? [],
+      businessById,
+      options.formFields ?? [],
+      options.mechanismCatalog ?? []
+    ),
     taskNotificationsEditor: taskNotificationsDefinition(element),
     taskDeadlineEditor: taskDeadlineDefinition(
       element,

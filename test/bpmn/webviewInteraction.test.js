@@ -137,6 +137,16 @@ test('eventos iniciais compatíveis escolhem ou removem inicializador do cache',
   assert.match(provider, /patchEventInitializer\(document\.getText\(\), elementId, initializer\)/);
 });
 
+test('início simples edita o mecanismo de atribuição do inicializador', () => {
+  const source = fs.readFileSync(path.join(__dirname, '..', '..', 'media', 'bpmn', 'editor.js'), 'utf8');
+  assert.match(source, /if \(editor\.mechanisms\) \{\s*renderAssignmentEditor\(element, editor, \{\s*sectionClass: 'event-initializer',\s*title: 'Mecanismo de atribuição',[\s\S]*?applyClass: 'event-initializer-apply',\s*request: requestEventInitializerMechanismUpdate/);
+  assert.match(source, /function requestEventInitializerMechanismUpdate\(element, section, applyButtonForInitializer\)/);
+  assert.match(source, /const initializer = \{\s*mechanism: mechanismSelect\.value,\s*mechanismConfiguration: readTaskMechanismConfiguration\(section\)\s*\};/);
+  assert.match(source, /'taskAssignmentEditor',\s*'eventInitializerEditor',/);
+  assert.match(source, /\['processManagerEditor', 'taskAssignmentEditor', 'processAttachmentSecurityEditor', 'eventInitializerEditor'\]/);
+  assert.match(source, /\?\? element\?\.eventInitializerEditor/);
+});
+
 test('atividades comuns editam acompanhamento e atraso em seção dedicada', () => {
   const source = fs.readFileSync(path.join(__dirname, '..', '..', 'media', 'bpmn', 'editor.js'), 'utf8');
   const provider = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'bpmn', 'FluigProcessEditorProvider.ts'), 'utf8');

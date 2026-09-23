@@ -1,6 +1,7 @@
 'use strict';
 
 const { decodeXml, descendants, tokenizeXml } = require('./xmlTokenizer');
+const { availableMechanisms, parseAssignmentController } = require('./gatewayConditions');
 
 const INITIALIZER_ROOT = 'org.eclipse.bpmn2.impl.AssignmentControllerColleague';
 const SUPPORTED_INITIALIZERS = new Set([
@@ -11,7 +12,29 @@ const SUPPORTED_INITIALIZERS = new Set([
 ]);
 
 function supportsEventInitializer(element) {
-  return SUPPORTED_INITIALIZERS.has(`${element?.tag}:${element?.type}`);
+  return SUPPORTED_INITIALIZERS.has(`${element?.tag}:${element?.type}`) || supportsInitializerMechanism(element);
+}
+
+// Plain start events store a full assignment mechanism (who may start the process) in initializerConfiguration.
+function supportsInitializerMechanism(element) {
+  return element?.tag === 'BpmnStartEvent' && String(element.type) === '10';
+}
+
+function initializerMechanismDefinition(element, businessById, formFields, mechanismCatalog) {
+  const configuration = element.attributes?.initializerConfiguration;
+  const mechanism = decodeXml(
+    String(configuration ?? '').match(/<mechanismName>([\s\S]*?)<\/mechanismName>/)?.[1] ?? ''
+  ).trim();
+  return {
+    supported: true,
+    mechanisms: availableMechanisms(mechanism ? [{ mechanism }] : [], businessById, mechanismCatalog),
+    formFields: [...formFields],
+    executorNodes: [...businessById.values()]
+      .filter((item) => ['BpmnStartEvent', 'BpmnTask', 'BpmnSubProcess'].includes(item.tag))
+      .map((item) => ({ id: item.id, name: item.name || item.typeLabel || item.id })),
+    mechanism,
+    mechanismConfiguration: parseAssignmentController(configuration)
+  };
 }
 
 function parseInitializerConfiguration(configuration) {
@@ -38,8 +61,11 @@ function parseInitializerConfiguration(configuration) {
   return { userId: value('colleagueId') };
 }
 
-function eventInitializerDefinition(element, userCatalog = []) {
+function eventInitializerDefinition(element, userCatalog = [], businessById = new Map(), formFields = [], mechanismCatalog = []) {
   if (!supportsEventInitializer(element)) return null;
+  if (supportsInitializerMechanism(element)) {
+    return initializerMechanismDefinition(element, businessById, formFields, mechanismCatalog);
+  }
   try {
     const { userId } = parseInitializerConfiguration(element.attributes?.initializerConfiguration);
     const options = [...userCatalog];
@@ -71,5 +97,6 @@ module.exports = {
   eventInitializerDefinition,
   parseInitializerConfiguration,
   serializeInitializerConfiguration,
-  supportsEventInitializer
+  supportsEventInitializer,
+  supportsInitializerMechanism
 };
