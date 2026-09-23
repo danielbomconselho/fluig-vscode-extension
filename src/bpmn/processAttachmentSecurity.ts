@@ -88,7 +88,8 @@ function parseSecurityRule(xml, node, index) {
   return {
     sourceIndex: index,
     companyId: positiveInteger(childText(xml, node, 'companyId')) || 1,
-    processId: childText(xml, node, 'processId').trim(),
+    // Fluig Studio omits processId; it is filled from the process when the rules are saved.
+    processId: directChild(node, 'processId', false) ? childText(xml, node, 'processId').trim() : '',
     version: positiveInteger(childText(xml, node, 'version')) || 1,
     sequence: positiveInteger(childText(xml, node, 'sequence')) || index + 1,
     mechanism,

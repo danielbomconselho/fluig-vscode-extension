@@ -71,6 +71,17 @@ test('interpreta a segurança de anexos criada pelo Eclipse', () => {
   });
 });
 
+test('interpreta regras do Fluig Studio sem processId e com companyId/version zerados', () => {
+  const studioXml = eclipseSecurityXml
+    .replace('    <processId>toexportbpmnteste</processId>\n', '')
+    .replace('<companyId>1</companyId>', '<companyId>0</companyId>')
+    .replace('<version>1</version>', '<version>0</version>');
+  const [rule] = parseProcessAttachmentSecurity(studioXml);
+  assert.equal(rule.processId, '');
+  assert.equal(rule.mechanism, 'Usuário');
+  assert.equal(rule.mechanismConfiguration.colleagueId, 'daniel.sales');
+});
+
 test('grava várias regras, permissões e mecanismos no formato XStream do Eclipse', () => {
   const requested = {
     controlled: true,
