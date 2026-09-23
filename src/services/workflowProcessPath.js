@@ -24,7 +24,13 @@ function ecm30PathForProcess(filePath) {
     return path.join(path.dirname(diagramsDirectory), '.resources', `${processId}.ecm30.xml`);
 }
 
+function processImagePathForProcess(filePath) {
+    const ecm30Path = ecm30PathForProcess(filePath);
+    return path.join(path.dirname(ecm30Path), `${path.basename(filePath, path.extname(filePath))}.processimage.svg`);
+}
+
 module.exports = {
     ecm30PathForProcess,
     isWorkflowDiagramProcessPath,
+    processImagePathForProcess,
 };

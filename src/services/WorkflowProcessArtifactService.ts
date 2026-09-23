@@ -1,3 +1,4 @@
+import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import * as vscode from "vscode";
@@ -7,11 +8,14 @@ const {
     generateEcm30Artifact,
     resolveJavaExecutable,
     writeEcm30Artifact,
+    writeProcessImageArtifact,
 } = require("./Ecm30GenerationService");
 const {
     ecm30PathForProcess,
     isWorkflowDiagramProcessPath,
+    processImagePathForProcess,
 } = require("./workflowProcessPath");
+const { renderProcessImageSvg } = require("../bpmn/processImage");
 
 export class WorkflowProcessArtifactService {
     private static context: vscode.ExtensionContext;
@@ -69,17 +73,20 @@ export class WorkflowProcessArtifactService {
             await running;
         }
 
-        const outputUri = vscode.Uri.file(ecm30PathForProcess(processUri.fsPath));
+        const outputUris = [
+            vscode.Uri.file(ecm30PathForProcess(processUri.fsPath)),
+            vscode.Uri.file(processImagePathForProcess(processUri.fsPath)),
+        ];
         try {
-            const [processStat, outputStat] = await Promise.all([
+            const [processStat, ...outputStats] = await Promise.all([
                 vscode.workspace.fs.stat(processUri),
-                vscode.workspace.fs.stat(outputUri),
+                ...outputUris.map(outputUri => vscode.workspace.fs.stat(outputUri)),
             ]);
-            if (outputStat.mtime + 1000 >= processStat.mtime) {
+            if (outputStats.every(outputStat => outputStat.mtime + 1000 >= processStat.mtime)) {
                 return;
             }
         } catch (_error) {
-            // Ausente ou desatualizado: a geração abaixo produzirá o artefato.
+            // Ausente ou desatualizado: a geração abaixo produzirá os artefatos.
         }
 
         const operation = WorkflowProcessArtifactService.generateForUri(processUri, false);
@@ -233,6 +240,8 @@ export class WorkflowProcessArtifactService {
 
         const processId = path.basename(uri.fsPath, ".process");
         const outputPath = ecm30PathForProcess(uri.fsPath);
+        // The process image is always generated with the ECM30: Fluig needs it to open the flow drawing.
+        const processImage = renderProcessImageSvg(fs.readFileSync(uri.fsPath, "utf8"));
         const bridgeClassesDirectory = vscode.Uri.joinPath(
             WorkflowProcessArtifactService.context.extensionUri,
             "tools",
@@ -262,6 +271,7 @@ export class WorkflowProcessArtifactService {
             : await operation();
 
         const written = writeEcm30Artifact(outputPath, generated.content);
+        writeProcessImageArtifact(processImagePathForProcess(uri.fsPath), processImage);
         if (interactive) {
             const backup = written.backupPath
                 ? ` Backup anterior: ${written.backupPath}.`

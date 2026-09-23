@@ -149,6 +149,29 @@ test("execucao usa token, senha vazia e parametros observados no Eclipse", async
     assert.equal(importCall.params.attachments.item[0].principal, true);
     assert.equal(importCall.params.attachments.item[1].attach, true);
     assert.equal(importCall.params.attachments.item[1].principal, false);
+    assert.equal(importCall.params.attachments.item[1].fileName, "PROC_TESTE.processimage.svg");
+    assert.match(
+        Buffer.from(importCall.params.attachments.item[1].filecontent, "base64").toString("utf8"),
+        /<svg /
+    );
+});
+
+test("recusa exportar sem a imagem do processo gerada", async t => {
+    const files = fixture();
+    t.after(() => fs.rmSync(files.root, { recursive: true, force: true }));
+    const gateway = new FakeGateway();
+    const service = new FluigProcessExportService(gateway);
+
+    await assert.rejects(
+        service.export(server(), options(files, { svgPath: undefined, dryRun: false })),
+        /processimage\.svg/
+    );
+    fs.rmSync(files.svgPath);
+    await assert.rejects(
+        service.export(server(), options(files, { dryRun: false })),
+        /imagem do processo \(processimage\.svg\) ainda nao foi gerada/
+    );
+    assert.deepEqual(gateway.calls, []);
 });
 
 test("processo novo pula criacao de versao e recarrega a lista", async t => {

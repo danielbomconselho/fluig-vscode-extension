@@ -16,11 +16,14 @@ const {
     parseJavaMajorVersion,
     resolveJavaExecutable,
     writeEcm30Artifact,
+    writeProcessImageArtifact,
 } = require("../src/services/Ecm30GenerationService");
 const {
     ecm30PathForProcess,
     isWorkflowDiagramProcessPath,
+    processImagePathForProcess,
 } = require("../src/services/workflowProcessPath");
+const { assertGeneratedArtifactsFresh } = require("../src/services/FluigProcessExportService");
 
 function temporaryDirectory(t) {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "ecm30-generation-"));
@@ -248,4 +251,29 @@ test("orquestra Java, ponte e validacao sem gravar o .process", async t => {
     assert.equal(fs.readFileSync(processPath, "utf8"), "<xmi:XMI></xmi:XMI>");
     assert.equal(calls.length, 2);
     assert.match(calls[1][0], /^--add-opens=/);
+});
+
+test("grava a imagem do processo ao lado do ECM30 para a exportacao", t => {
+    const root = temporaryDirectory(t);
+    const processPath = path.join(root, "workflow", "diagrams", "processo.process");
+    fs.mkdirSync(path.dirname(processPath), { recursive: true });
+    fs.writeFileSync(processPath, "<xmi:XMI></xmi:XMI>");
+    const ecm30Path = ecm30PathForProcess(processPath);
+    const svgPath = processImagePathForProcess(processPath);
+    const svg = '<?xml version="1.0" encoding="UTF-8"?>\n<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"></svg>\n';
+
+    assert.equal(svgPath, path.join(root, "workflow", ".resources", "processo.processimage.svg"));
+    assert.throws(() => processImagePathForProcess(path.join(root, "processo.process")), /workflow\/diagrams/);
+    assert.throws(() => writeProcessImageArtifact(svgPath, "<list></list>"), /<svg>/);
+    assert.equal(fs.existsSync(svgPath), false);
+
+    writeEcm30Artifact(ecm30Path, Buffer.from(
+        "<list><ProcessDefinition></ProcessDefinition><ProcessDefinitionVersion></ProcessDefinitionVersion></list>"
+    ));
+    const written = writeProcessImageArtifact(svgPath, svg);
+
+    assert.equal(written.filePath, svgPath);
+    assert.equal(written.bytes, Buffer.byteLength(svg));
+    assert.equal(fs.readFileSync(svgPath, "utf8"), svg);
+    assert.doesNotThrow(() => assertGeneratedArtifactsFresh(processPath, ecm30Path, svgPath));
 });
