@@ -293,8 +293,10 @@ function elementConfigurationIssues(element, businessById = new Map()) {
   } else if (element.tag === 'BpmnEndEvent') {
     if (!incoming.length) issues.push('Evento final sem fluxo de entrada.');
   } else if (['BpmnTask', 'BpmnSubProcess', 'BpmnIntermediateEvent', 'BpmnGateway'].includes(element.tag)) {
-    if (!incoming.length) issues.push('Elemento sem fluxo de entrada.');
-    if (!outgoing.length) issues.push('Elemento sem fluxo de saída.');
+    // Link events connect through linkId: throw link (36) has no outgoing flow, catch link (42) no incoming.
+    const isLinkEvent = element.tag === 'BpmnIntermediateEvent';
+    if (!incoming.length && !(isLinkEvent && element.type === '42')) issues.push('Elemento sem fluxo de entrada.');
+    if (!outgoing.length && !(isLinkEvent && element.type === '36')) issues.push('Elemento sem fluxo de saída.');
   }
   if (element.tag === 'BpmnIntermediateEvent' && element.type === '36') {
     const linkId = String(element.attributes?.linkId ?? '').trim();

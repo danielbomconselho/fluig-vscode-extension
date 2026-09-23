@@ -291,11 +291,13 @@ test('mapeia intermediate link para um seletor de eventos receptores', () => {
   assert.deepEqual(property.options.map((item) => item.value), ['', 'intermediatelinkreceive29']);
   assert.match(property.options[1].label, /^intermediatelinkreceive29 - /);
   assert.equal(sender.configurationIssues.some((issue) => issue.includes('receptor')), false);
+  const receiver = data.elements.find((element) => element.id === 'intermediatelinkreceive29');
   assert.equal(
-    data.elements.find((element) => element.id === 'intermediatelinkreceive29')
-      .editableProperties.some((item) => item.name === 'linkId'),
+    receiver.editableProperties.some((item) => item.name === 'linkId'),
     false
   );
+  assert.equal(sender.configurationIssues.includes('Elemento sem fluxo de saída.'), false);
+  assert.equal(receiver.configurationIssues.includes('Elemento sem fluxo de entrada.'), false);
 });
 
 function assertPointOnRectangle(point, shape) {
