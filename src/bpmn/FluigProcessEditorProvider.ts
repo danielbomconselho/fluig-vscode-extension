@@ -60,7 +60,7 @@ const { RemoteFormCatalogService } = require('./remoteFormCatalog');
 const { discoverMechanismCatalog } = require('./mechanismCatalog');
 const { discoverUserCatalog } = require('./userCatalog');
 const { findLikelyNodeReferences, projectRootForProcessPath } = require('./nodeReferenceScanner');
-const { parseEventTriggerData } = require('./eventTrigger');
+const { triggerScriptConditionFileName } = require('./eventTrigger');
 const { buildTranslationPlan, LOCALES, validateTranslationPlan } = require('./translationService');
 const { TranslationPreviewProvider } = require('./translationPreviewProvider');
 const {
@@ -2550,7 +2550,7 @@ class FluigProcessEditorProvider {
       || (element?.tag === 'BpmnIntermediateEvent' && element.type === '35');
     if (!conditional) return null;
 
-    const fileName = String(parseEventTriggerData(element.attributes.trigger).scriptCondition ?? '').trim();
+    const fileName = triggerScriptConditionFileName(element.attributes.trigger);
     if (!fileName) return null;
     return this.resolveLinkedScriptFile(document, fileName, 'evento');
   }
