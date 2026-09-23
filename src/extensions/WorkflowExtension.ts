@@ -30,11 +30,11 @@ export class WorkflowExtension {
         ));
         context.subscriptions.push(vscode.commands.registerCommand(
             "fluiggers-fluig-vscode-extension.validateWorkflowProcessExport",
-            WorkflowProcessExportService.validate
+            (processUri?: vscode.Uri) => WorkflowProcessExportService.validate(processUri, context)
         ));
         context.subscriptions.push(vscode.commands.registerCommand(
             "fluiggers-fluig-vscode-extension.exportWorkflowProcess",
-            WorkflowProcessExportService.export
+            (processUri?: vscode.Uri) => WorkflowProcessExportService.export(processUri, context)
         ));
         context.subscriptions.push(vscode.commands.registerCommand(
             "fluiggers-fluig-vscode-extension.newMechanism",
