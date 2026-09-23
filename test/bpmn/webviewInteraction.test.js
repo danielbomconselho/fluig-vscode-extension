@@ -840,7 +840,21 @@ test('processo edita codigo, escolhe servidor cadastrado e configura gestor', ()
     provider.indexOf('async refactorSavedProcessIdentity')
   );
   assert.doesNotMatch(applyIdentity, /renameFile\(/);
-  assert.match(applyIdentity, /Salve o \.process para concluir a refatoracao/);
+  // Like Fluig Studio, the rename is completed without a manual save.
+  assert.ok(
+    applyIdentity.indexOf('this.pendingProcessRenames.set(') < applyIdentity.indexOf('await document.save()'),
+    'autosave ocorre depois de registrar a renomeacao aprovada'
+  );
+  const refactor = provider.slice(
+    provider.indexOf('async refactorSavedProcessIdentity'),
+    provider.indexOf('async applyProcessVersionChanges')
+  );
+  assert.match(refactor, /saveRenamedDocuments\(\[processTarget, \.\.\.finalRelated\.map/);
+  const completed = provider.slice(
+    provider.indexOf('handleCompletedProcessRenames(event) {'),
+    provider.indexOf('async discoverRelatedArtifactRenames')
+  );
+  assert.match(completed, /saveRenamedDocuments\(\[file\.newUri, \.\.\.summary\.renamedUris\]\)/);
   assert.match(source, /scripts, literais e artefatos vinculados/);
   const readForm = source.match(/function readForm\(\) \{[\s\S]*?\n  \}/)?.[0] ?? '';
   assert.match(readForm, /querySelectorAll\('\[data-property-name\]'\)/);

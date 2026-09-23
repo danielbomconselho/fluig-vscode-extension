@@ -47,7 +47,7 @@ const {
   normalizeProcessGeneralConfiguration,
   supportsProcessGeneral
 } = require('./processGeneral');
-const { assertDistinctProcessCode } = require('./processIdentity');
+const { assertDistinctProcessCode, renamedArtifactName } = require('./processIdentity');
 const {
   normalizeProcessVersionConfiguration,
   supportsProcessVersion
@@ -318,6 +318,27 @@ function patchProcessGeneral(text, elementId, requestedConfiguration, catalogs =
   return { text: updatedText, changed: updatedText !== text, model: updatedModel, validation, patches: uniquePatches };
 }
 
+// Like Fluig Studio, keep task scriptFileName and conditional trigger scriptCondition pointing to the renamed scripts.
+function patchScriptReferences(text, model, currentCode, requestedCode, patches) {
+  for (const element of model.elements) {
+    const scriptFileName = String(element.attributes?.scriptFileName ?? '');
+    const renamedScript = renamedArtifactName('scripts', scriptFileName, currentCode, requestedCode);
+    if (renamedScript) patchAttribute(text, element.node, 'scriptFileName', renamedScript, patches);
+
+    for (const name of ['trigger', 'triggers']) {
+      const trigger = element.node?.attributeMap?.[name];
+      if (!trigger) continue;
+      // Script names only contain [A-Za-z0-9_.-], so they appear unescaped inside the encoded trigger.
+      for (const match of String(trigger.rawValue).matchAll(/&lt;scriptCondition(?:>|&gt;)([^&<"]*)&lt;\/scriptCondition/g)) {
+        const renamedCondition = renamedArtifactName('scripts', match[1], currentCode, requestedCode);
+        if (!renamedCondition) continue;
+        const start = trigger.valueStart + match.index + match[0].indexOf(match[1], match[0].indexOf('scriptCondition') + 15);
+        patches.push({ start, end: start + match[1].length, value: renamedCondition });
+      }
+    }
+  }
+}
+
 function patchProcessIdentity(text, expectedCode, requestedCode) {
   const model = parseProcess(text);
   const beforeValidation = validateProcess(model);
@@ -335,6 +356,7 @@ function patchProcessIdentity(text, expectedCode, requestedCode) {
   const patches = [];
   patchAttribute(text, element.node, 'id', code, patches, { required: true });
   patchAttribute(text, model.diagram, 'name', code, patches, { required: true });
+  patchScriptReferences(text, model, element.id, code, patches);
   const uniquePatches = deduplicatePatches(patches);
   const updatedText = applyPatches(text, uniquePatches);
   const updatedModel = parseProcess(updatedText);

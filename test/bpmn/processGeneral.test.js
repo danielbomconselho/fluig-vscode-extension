@@ -7,6 +7,7 @@ const path = require('node:path');
 const { parseProcess } = require('../../src/bpmn/processModel');
 const { patchProcessGeneral, patchProcessIdentity, patchProcess } = require('../../src/bpmn/processPatcher');
 const { processGeneralDefinition } = require('../../src/bpmn/processGeneral');
+const { triggerScriptConditionFileName } = require('../../src/bpmn/eventTrigger');
 
 const fixture = fs.readFileSync(
   path.join(__dirname, 'fixtures', 'project', 'workflow', 'diagrams', 'toexportbpmnteste.process'),
@@ -83,6 +84,14 @@ test('renomeia somente a identidade interna e mantem o diagrama estruturalmente 
   assert.equal(result.model.diagram.attributeMap.name.value, 'processo_viagem');
   assert.equal(result.validation.ok, true);
   assert.equal(result.model.flows.length, parseProcess(fixture).flows.length);
+  // Like Fluig Studio, script references inside the .process follow the renamed script files.
+  const renamed = new Map(result.model.elements.map((element) => [element.id, element]));
+  assert.equal(renamed.get('servicetask11').attributes.scriptFileName, 'processo_viagem.servicetask11.js');
+  assert.equal(renamed.get('businessruletask33').attributes.scriptFileName, 'processo_viagem.businessruletask33.js');
+  assert.equal(renamed.get('scripttask34').attributes.scriptFileName, 'processo_viagem.scripttask34.js');
+  assert.equal(triggerScriptConditionFileName(renamed.get('startconditional16').attributes.trigger), 'processo_viagem.startconditional16.js');
+  assert.equal(triggerScriptConditionFileName(renamed.get('intermediateconditional24').attributes.trigger), 'processo_viagem.intermediateconditional24.js');
+  assert.doesNotMatch(result.text, /toexportbpmnteste\.\w+\.js/);
   assert.equal(patchProcessIdentity(result.text, 'processo_viagem', 'processo_viagem').changed, false);
   assert.throws(
     () => patchProcessIdentity(fixture, 'toexportbpmnteste', 'TOEXPORTBPMNTESTE'),

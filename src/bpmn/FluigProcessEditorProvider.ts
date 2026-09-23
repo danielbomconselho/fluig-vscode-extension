@@ -579,7 +579,8 @@ class FluigProcessEditorProvider {
         this.externalProcessRenameSummaries.set(renameKey, {
           oldCode: model.process.id,
           newCode: requestedCode,
-          relatedCount: related.length
+          relatedCount: related.length,
+          renamedUris: related.map((rename) => rename.newUri)
         });
         changed = changed || identity.changed || automatic.length > 0;
       }
@@ -604,11 +605,21 @@ class FluigProcessEditorProvider {
       const summary = this.externalProcessRenameSummaries?.get(processRenameKey(file.oldUri, file.newUri));
       if (summary) {
         this.externalProcessRenameSummaries.delete(processRenameKey(file.oldUri, file.newUri));
+        // The identity patches leave the renamed .process dirty; save it like Fluig Studio does.
+        void this.saveRenamedDocuments([file.newUri, ...summary.renamedUris]);
         void vscode.window.showInformationMessage(
           `Fluig BPMN: processo ${summary.oldCode} renomeado para ${summary.newCode}; ${summary.relatedCount} arquivo(s) vinculado(s) sincronizado(s).`
         );
       }
     }
+  }
+
+  /** Saves the open documents among the renamed files that are left dirty. @param {vscode.Uri[]} uris */
+  async saveRenamedDocuments(uris) {
+    const keys = new Set(uris.map(normalizeUriKey));
+    await Promise.all(vscode.workspace.textDocuments
+      .filter((document) => document.isDirty && keys.has(normalizeUriKey(document.uri)))
+      .map((document) => document.save()));
   }
 
   async discoverRelatedArtifactRenames(processUri, currentCode, requestedCode) {
@@ -731,7 +742,7 @@ class FluigProcessEditorProvider {
         {
           modal: true,
           detail: [
-            'A alteracao sera aplicada ao documento agora. Ao salvar, o arquivo .process, scripts, literais e artefatos gerados vinculados serao renomeados.',
+            'O documento sera salvo e o arquivo .process, scripts, literais e artefatos gerados vinculados serao renomeados, como no Fluig Studio.',
             ...preview
           ].join('\n')
         },
@@ -766,11 +777,13 @@ class FluigProcessEditorProvider {
     } else {
       this.pendingProcessRenames.delete(documentKey);
     }
+    // Like Fluig Studio, complete the rename right away: saving triggers refactorSavedProcessIdentity.
+    await document.save();
     void panel.webview.postMessage({ type: 'processGeneralComplete', elementId: requestedCode });
     void panel.webview.postMessage({
       type: 'toast',
       message: processFileChanges.length
-        ? `Codigo alterado para ${requestedCode}. Salve o .process para concluir a refatoracao de ${related.length} arquivo(s) vinculado(s).`
+        ? `Codigo alterado para ${requestedCode}; ${related.length} arquivo(s) vinculado(s) refatorado(s) e salvo(s).`
         : `Codigo interno restaurado para ${requestedCode}.`
     });
   }
@@ -858,6 +871,7 @@ class FluigProcessEditorProvider {
         throw new Error('O VS Code recusou a refatoracao dos arquivos vinculados. Nenhum arquivo foi sobrescrito.');
       }
       this.pendingProcessRenames.delete(documentKey);
+      await this.saveRenamedDocuments([processTarget, ...finalRelated.map((rename) => rename.newUri)]);
     } catch (error) {
       if (renameKey) {
         this.externalProcessRenameSummaries.delete(renameKey);
