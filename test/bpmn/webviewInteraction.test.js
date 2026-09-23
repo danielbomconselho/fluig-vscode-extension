@@ -837,6 +837,24 @@ test('processo edita codigo, escolhe servidor cadastrado e configura gestor', ()
   assert.doesNotMatch(readForm, /propertyForm\.elements/);
 });
 
+test('refatoracao ao salvar aguarda a geracao do ECM30 do codigo antigo antes de renomear', () => {
+  const provider = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'bpmn', 'FluigProcessEditorProvider.ts'), 'utf8');
+  const service = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'services', 'WorkflowProcessArtifactService.ts'), 'utf8');
+  const refactor = provider.slice(
+    provider.indexOf('async refactorSavedProcessIdentity'),
+    provider.indexOf('async applyProcessVersionChanges')
+  );
+  const settle = refactor.indexOf('await WorkflowProcessArtifactService.settle(document.uri)');
+  assert.ok(settle > refactor.indexOf("'Refatorar arquivos'"), 'settle ocorre depois da confirmacao');
+  assert.ok(settle < refactor.indexOf('discoverRelatedArtifactRenames', settle), 'artefatos redescobertos depois do settle');
+  assert.ok(settle < refactor.indexOf('new vscode.WorkspaceEdit()'), 'settle ocorre antes do rename');
+  const run = service.slice(service.indexOf('private static async runAutomaticGeneration'));
+  assert.ok(
+    run.indexOf('vscode.workspace.fs.stat(uri)') < run.indexOf('generateForUri(uri, false)'),
+    'geracao automatica ignora .process que ja foi renomeado'
+  );
+});
+
 test('webview invalida cache dos recursos e sempre apresenta Campos no subprocesso comum', () => {
   const source = fs.readFileSync(path.join(__dirname, '..', '..', 'media', 'bpmn', 'editor.js'), 'utf8');
   const provider = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'bpmn', 'FluigProcessEditorProvider.ts'), 'utf8');

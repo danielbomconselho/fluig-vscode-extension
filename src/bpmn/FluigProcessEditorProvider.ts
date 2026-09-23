@@ -5,6 +5,7 @@ const crypto = require('node:crypto');
 const path = require('node:path');
 const zlib = require('node:zlib');
 const { parseProcess } = require('./processModel');
+const { WorkflowProcessArtifactService } = require('../services/WorkflowProcessArtifactService');
 const {
   convertTaskType,
   createConnectedEndEvent,
@@ -836,8 +837,13 @@ class FluigProcessEditorProvider {
         }
       }
 
+      // The on-save ECM30 generation may still write <oldCode>.ecm30.xml; settle it and rediscover before renaming.
+      await WorkflowProcessArtifactService.settle(document.uri);
+      const finalRelated = await this.discoverRelatedArtifactRenames(document.uri, fileCode, requestedCode);
+      await this.assertRenameTargetsAvailable([processFileChange, ...finalRelated]);
+
       const edit = new vscode.WorkspaceEdit();
-      for (const rename of related) {
+      for (const rename of finalRelated) {
         edit.renameFile(rename.oldUri, rename.newUri, { overwrite: false, ignoreIfExists: false });
       }
       renameKey = processRenameKey(document.uri, processTarget);
@@ -845,7 +851,7 @@ class FluigProcessEditorProvider {
       this.externalProcessRenameSummaries.set(renameKey, {
         oldCode: fileCode,
         newCode: requestedCode,
-        relatedCount: related.length
+        relatedCount: finalRelated.length
       });
       edit.renameFile(document.uri, processTarget, { overwrite: false, ignoreIfExists: false });
       if (!await vscode.workspace.applyEdit(edit)) {

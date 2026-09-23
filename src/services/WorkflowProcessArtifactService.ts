@@ -95,6 +95,13 @@ export class WorkflowProcessArtifactService {
         }
     }
 
+    /** Cancels the pending automatic generation and waits for a running one, so the .process can be renamed safely. */
+    public static async settle(processUri: vscode.Uri): Promise<void> {
+        const key = path.normalize(processUri.fsPath).toLowerCase();
+        WorkflowProcessArtifactService.cancelAutomaticGeneration(processUri);
+        await WorkflowProcessArtifactService.running.get(key)?.catch(() => undefined);
+    }
+
     private static scheduleAutomaticGeneration(uri: vscode.Uri): void {
         if (!isWorkflowDiagramProcessPath(uri.fsPath)) {
             return;
@@ -129,6 +136,12 @@ export class WorkflowProcessArtifactService {
     }
 
     private static async runAutomaticGeneration(uri: vscode.Uri, key: string): Promise<void> {
+        try {
+            await vscode.workspace.fs.stat(uri);
+        } catch (_error) {
+            // The .process was renamed or deleted after scheduling; the new path schedules its own generation.
+            return;
+        }
         if (WorkflowProcessArtifactService.running.has(key)) {
             WorkflowProcessArtifactService.rerun.add(key);
             return;
