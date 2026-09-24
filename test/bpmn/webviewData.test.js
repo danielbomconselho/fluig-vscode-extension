@@ -30,6 +30,7 @@ test('serializa modelo seguro para a webview', () => {
   assert.equal(data.extensionVersion, '0.28.1-test');
   assert.equal(data.connections.length, 11);
   const flow47Connection = data.connections.find((connection) => connection.businessObject === 'flow47');
+  const flow48Connection = data.connections.find((connection) => connection.businessObject === 'flow48');
   const taskShape = data.shapes.find((shape) => shape.businessObject === 'task5');
   const gatewayShape = data.shapes.find((shape) => shape.businessObject === 'exclusivegateway39');
   const databaseShape = data.shapes.find((shape) => shape.businessObject === 'databasetask37');
@@ -46,7 +47,24 @@ test('serializa modelo seguro para a webview', () => {
     { x: poolShape.x + 30, localX: 30, parentBusinessObject: 'pool1', depth: 1 }
   );
   assertPointOnRectangle(flow47Connection.source, taskShape);
-  assertPointOnDiamond(flow47Connection.target, gatewayShape, 60, 60);
+  assertPointOnRectangle(flow47Connection.target, gatewayShape);
+  assert.deepEqual(flow48Connection.source, { x: 1210, y: 112 });
+  assert.deepEqual(
+    { width: gatewayShape.visualWidth, height: gatewayShape.visualHeight, logicalHeight: gatewayShape.height },
+    { width: 60, height: 60, logicalHeight: 102 }
+  );
+  for (const connection of data.connections.filter((item) => item.bendpoints.length)) {
+    const first = connection.bendpoints[0];
+    const last = connection.bendpoints.at(-1);
+    assert.ok(
+      sameCoordinate(connection.source.x, first.x) || sameCoordinate(connection.source.y, first.y),
+      `${connection.businessObject} sai do elemento em diagonal`
+    );
+    assert.ok(
+      sameCoordinate(connection.target.x, last.x) || sameCoordinate(connection.target.y, last.y),
+      `${connection.businessObject} entra no elemento em diagonal`
+    );
+  }
   assert.deepEqual(
     { width: databaseShape.visualWidth, height: databaseShape.visualHeight },
     { width: 70, height: 78 }
@@ -311,8 +329,6 @@ function assertPointOnRectangle(point, shape) {
   assert.ok(Math.abs(Math.max(dx, dy) - 1) < 1e-8);
 }
 
-function assertPointOnDiamond(point, shape, width, height) {
-  const dx = Math.abs(point.x - (shape.x + (width / 2))) / (width / 2);
-  const dy = Math.abs(point.y - (shape.y + (height / 2))) / (height / 2);
-  assert.ok(Math.abs((dx + dy) - 1) < 1e-8);
+function sameCoordinate(left, right) {
+  return Math.abs(left - right) < 1e-8;
 }

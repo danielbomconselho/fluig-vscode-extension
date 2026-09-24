@@ -104,7 +104,7 @@ button:disabled { cursor: default; opacity: .5; }
     linear-gradient(to bottom, var(--diagram-grid-color) 1px, transparent 1px);
   background-size: var(--diagram-grid-size) var(--diagram-grid-size);
 }
-#diagram { display: block; min-width: 100%; min-height: 100%; transform-origin: top left; }
+#diagram { display: block; transform-origin: top left; }
 #viewport { transform-origin: 0 0; }
 .selection-marquee { fill: color-mix(in srgb, var(--accent) 14%, transparent); stroke: var(--accent); stroke-width: 1.3; stroke-dasharray: 6 4; vector-effect: non-scaling-stroke; pointer-events: none; }
 
@@ -520,14 +520,14 @@ button:disabled { cursor: default; opacity: .5; }
 .node.connection-target > .body { stroke: #2da44e !important; stroke-width: 3 !important; }
 .node.boundary-error-target > .body { stroke: #2da44e !important; stroke-width: 3 !important; filter: drop-shadow(0 0 4px #2da44e); }
 
-.flow { cursor: pointer; fill: none; stroke: #000; stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+.flow { cursor: pointer; fill: none; stroke: #000; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
 .flow.documentary-association { stroke-dasharray: 6 5; stroke-width: 1.4; }
 .connection-preview.documentary-association-preview { stroke-dasharray: 6 5; }
 .flow-group:hover .flow:not(.selected) { stroke-width: 2.4; filter: drop-shadow(0 0 2px color-mix(in srgb, var(--accent) 65%, transparent)); }
 .flow-group:hover .flow-label { font-weight: 700; }
 .flow.return-flow { stroke: #e53935; stroke-width: 2; }
 .flow.automatic-flow { stroke: #2da44e; stroke-width: 2; }
-.flow-hitbox { cursor: pointer; fill: none; stroke: transparent; stroke-width: 12; vector-effect: non-scaling-stroke; }
+.flow-hitbox { cursor: pointer; fill: none; stroke: transparent; stroke-width: 12; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
 .flow.selected { stroke-width: 3; filter: drop-shadow(0 0 2px var(--accent)); }
 .flow-label { fill: #000; font: 11px var(--vscode-font-family); paint-order: stroke; stroke: #fff; stroke-width: 4px; stroke-linejoin: round; text-anchor: middle; pointer-events: none; }
 .flow-edit-overlay { pointer-events: none; }

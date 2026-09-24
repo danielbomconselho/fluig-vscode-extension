@@ -2,7 +2,14 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { defaultFlowMarkerSegment, findOrthogonalCrossings, polylineSegments, routeOrthogonal } = require('../../media/bpmn/flowRouter');
+const {
+  defaultFlowMarkerSegment,
+  findOrthogonalCrossings,
+  polylineSegments,
+  roundedBridgedPathData,
+  roundedPathData,
+  routeOrthogonal
+} = require('../../media/bpmn/flowRouter');
 
 const sourceBounds = { left: 0, top: 40, right: 40, bottom: 80 };
 const targetBounds = { left: 240, top: 40, right: 280, bottom: 80 };
@@ -57,6 +64,26 @@ test('identifica cruzamentos diagonais e nao ignora rotas que compartilham outra
     { id: 'descending', points: [{ x: 0, y: 0 }, { x: 100, y: 100 }, { x: 160, y: 0 }] }
   ]);
   assert.deepEqual(crossings.get('descending'), [{ segmentIndex: 0, point: { x: 50, y: 50 } }]);
+});
+
+test('arredonda os cotovelos sem alterar as extremidades do fluxo', () => {
+  assert.equal(
+    roundedPathData([{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 80 }]),
+    'M 0 0 L 88 0 Q 100 0 100 12 L 100 80'
+  );
+  assert.equal(
+    roundedPathData([{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 8 }]),
+    'M 0 0 L 6 0 Q 10 0 10 4 L 10 8'
+  );
+  assert.equal(roundedPathData([{ x: 0, y: 0 }, { x: 100, y: 0 }]), 'M 0 0 L 100 0');
+});
+
+test('preserva pontes de cruzamento junto aos cantos arredondados', () => {
+  const path = roundedBridgedPathData(
+    [{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 80 }],
+    [{ segmentIndex: 0, point: { x: 50, y: 0 } }]
+  );
+  assert.equal(path, 'M 0 0 L 44 0 Q 50 -6 56 0 L 88 0 Q 100 0 100 12 L 100 80');
 });
 
 function inflate(bounds, margin) {

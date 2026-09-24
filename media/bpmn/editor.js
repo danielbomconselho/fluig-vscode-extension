@@ -3,10 +3,16 @@
 
   const vscode = acquireVsCodeApi();
   const {
-    alignedCenterPositions, bestContextPadPosition, canvasViewBox, constrainedAttachedDelta, constrainedInsideDelta, edgeScrollVelocity, expandedCanvas, fittedCanvas, fullyContained,
-    normalizedRectangle, snappedPointDelta, snappedResizeSize, zoomedScrollPosition
+    alignedCenterPositions, bestContextPadPosition, canvasViewBox, connectionShapeSize, constrainedAttachedDelta, constrainedInsideDelta, directOrthogonalDirections, edgeScrollVelocity, expandedCanvas, fittedCanvas, fullyContained,
+    normalizedRectangle, shapeBoundaryPoint, snappedPointDelta, snappedResizeSize, zoomedScrollPosition
   } = window.FluigDragGeometry;
-  const { defaultFlowMarkerSegment, findOrthogonalCrossings, routeOrthogonal } = window.FluigFlowRouter;
+  const {
+    defaultFlowMarkerSegment,
+    findOrthogonalCrossings,
+    roundedBridgedPathData,
+    roundedPathData,
+    routeOrthogonal
+  } = window.FluigFlowRouter;
   const state = {
     data: null,
     elementById: new Map(),
@@ -48,6 +54,7 @@
     canvasHeight: 0,
     canvasMinX: 0,
     canvasMinY: 0,
+    canvasView: { x: 0, y: 0, width: 1000, height: 800 },
     layoutPreviewDirty: false,
     layoutCommitPending: false
   };
@@ -256,14 +263,14 @@
     if (message.type === 'reloadModel') vscode.postMessage({ type: 'ready' });
   });
 
-  document.getElementById('zoomIn').addEventListener('click', () => setZoom(state.zoom + 0.1));
+  document.getElementById('zoomIn').addEventListener('click', () => changeZoom(0.1));
   alignHorizontalButton.addEventListener('click', () => alignSelectedElements('horizontal'));
   alignVerticalButton.addEventListener('click', () => alignSelectedElements('vertical'));
   document.getElementById('showProcess').addEventListener('click', () => {
     const process = state.data?.elements?.find((element) => element.tag === 'BpmnProcess');
     if (process) selectElement(process.id);
   });
-  document.getElementById('zoomOut').addEventListener('click', () => setZoom(state.zoom - 0.1));
+  document.getElementById('zoomOut').addEventListener('click', () => changeZoom(-0.1));
   zoomResetButton.addEventListener('click', fitDiagram);
   canvasBackgroundColorInput.addEventListener('input', () => setCanvasBackground(canvasBackgroundColorInput.value, false));
   canvasBackgroundColorInput.addEventListener('change', () => setCanvasBackground(canvasBackgroundColorInput.value));
@@ -613,8 +620,8 @@
     const crossings = renderBridges ? findOrthogonalCrossings(routes) : new Map();
     for (const route of routes) {
       const { connection, points } = route;
-      const pathData = bridgedPathData(points, crossings.get(route.id) ?? []);
-      const hitboxData = straightPathData(points);
+      const pathData = roundedBridgedPathData(points, crossings.get(route.id) ?? []);
+      const hitboxData = roundedPathData(points);
       const element = findElement(connection.businessObject);
       const permitsReturn = element?.attributes.permiteRetorno === 'true';
       const automatic = element?.attributes.fluxoAutomatico === 'true';
@@ -659,43 +666,7 @@
   }
 
   function straightPathData(points) {
-    return points.map((point, index) => `${index ? 'L' : 'M'} ${point.x} ${point.y}`).join(' ');
-  }
-
-  function bridgedPathData(points, crossings) {
-    const bySegment = new Map();
-    for (const crossing of crossings) {
-      const values = bySegment.get(crossing.segmentIndex) ?? [];
-      values.push(crossing.point);
-      bySegment.set(crossing.segmentIndex, values);
-    }
-    let data = `M ${points[0].x} ${points[0].y}`;
-    for (let index = 1; index < points.length; index += 1) {
-      const from = points[index - 1];
-      const to = points[index];
-      const dx = to.x - from.x;
-      const dy = to.y - from.y;
-      const length = Math.hypot(dx, dy);
-      const unitX = length ? dx / length : 0;
-      const unitY = length ? dy / length : 0;
-      let normalX = -unitY;
-      let normalY = unitX;
-      const flipNormal = Math.abs(normalY) > 0.1 ? normalY > 0 : normalX < 0;
-      if (flipNormal) {
-        normalX *= -1;
-        normalY *= -1;
-      }
-      const ordered = [...(bySegment.get(index - 1) ?? [])].sort((left, right) => (
-        (((left.x - from.x) * unitX) + ((left.y - from.y) * unitY))
-          - (((right.x - from.x) * unitX) + ((right.y - from.y) * unitY))
-      ));
-      for (const point of ordered) {
-        data += ` L ${point.x - (unitX * 6)} ${point.y - (unitY * 6)}`;
-        data += ` Q ${point.x + (normalX * 6)} ${point.y + (normalY * 6)} ${point.x + (unitX * 6)} ${point.y + (unitY * 6)}`;
-      }
-      data += ` L ${to.x} ${to.y}`;
-    }
-    return data;
+    return roundedPathData(points);
   }
 
   function connectionPoints(connection) {
@@ -721,12 +692,14 @@
     const targetElement = findElement(connection.targetRef);
     const sourceCenter = shapeCenter(sourceShape, sourceElement);
     const targetCenter = shapeCenter(targetShape, targetElement);
-    const firstDirection = bendpoints[0] ?? targetCenter;
-    const lastDirection = bendpoints.at(-1) ?? sourceCenter;
+    const directDirections = directGatewayDirections(sourceShape, sourceElement, targetShape, targetElement, bendpoints);
+    const firstDirection = bendpoints[0] ?? directDirections?.source ?? targetCenter;
+    const lastDirection = bendpoints.at(-1) ?? directDirections?.target ?? sourceCenter;
+    const orthogonal = bendpoints.length > 0 || Boolean(directDirections);
     return [
-      clientBoundaryPoint(sourceShape, sourceElement, firstDirection),
+      clientBoundaryPoint(sourceShape, sourceElement, firstDirection, orthogonal),
       ...bendpoints,
-      clientBoundaryPoint(targetShape, targetElement, lastDirection)
+      clientBoundaryPoint(targetShape, targetElement, lastDirection, orthogonal)
     ];
   }
 
@@ -738,27 +711,24 @@
   }
 
   function shapeCenter(shape, element) {
-    const size = effectiveSize(shape, element);
+    const size = connectionSize(shape, element);
     return { x: shape.x + size.width / 2, y: shape.y + size.height / 2 };
   }
 
-  function clientBoundaryPoint(shape, element, toward) {
-    const size = effectiveSize(shape, element);
-    const origin = shapeCenter(shape, element);
-    const dx = toward.x - origin.x;
-    const dy = toward.y - origin.y;
-    if (dx === 0 && dy === 0) return origin;
-    let scale;
-    if (element?.tag?.includes('Event')) {
-      scale = (Math.min(size.width, size.height) / 2) / Math.hypot(dx, dy);
-    } else if (element?.tag === 'BpmnGateway') {
-      scale = 1 / ((Math.abs(dx) / (size.width / 2)) + (Math.abs(dy) / (size.height / 2)));
-    } else {
-      const horizontal = dx === 0 ? Number.POSITIVE_INFINITY : (size.width / 2) / Math.abs(dx);
-      const vertical = dy === 0 ? Number.POSITIVE_INFINITY : (size.height / 2) / Math.abs(dy);
-      scale = Math.min(horizontal, vertical);
-    }
-    return { x: origin.x + (dx * scale), y: origin.y + (dy * scale) };
+  function clientBoundaryPoint(shape, element, toward, orthogonal = false) {
+    const size = connectionSize(shape, element);
+    const kind = element?.tag?.includes('Event')
+      ? 'ellipse'
+      : 'rectangle';
+    return shapeBoundaryPoint({ x: shape.x, y: shape.y, ...size }, toward, kind, orthogonal);
+  }
+
+  function directGatewayDirections(sourceShape, sourceElement, targetShape, targetElement, bendpoints) {
+    if (bendpoints.length || (sourceElement?.tag !== 'BpmnGateway' && targetElement?.tag !== 'BpmnGateway')) return null;
+    return directOrthogonalDirections(
+      { x: sourceShape.x, y: sourceShape.y, ...connectionSize(sourceShape, sourceElement) },
+      { x: targetShape.x, y: targetShape.y, ...connectionSize(targetShape, targetElement) }
+    );
   }
 
   function polylineMidpoint(points) {
@@ -1604,7 +1574,7 @@
       if (!element || ['BpmnPool', 'BpmnSwimLane', 'BpmnGroup'].includes(element.tag)) return [];
       const bounds = shapeBounds(shape);
       if ((element.tag.includes('Event') && !isAttachedBoundaryEvent(element))
-        || element.tag === 'BpmnGateway' || element.tag === 'BpmnDatabase' || element.tag === 'BpmnDocument') {
+        || element.tag === 'BpmnDatabase' || element.tag === 'BpmnDocument') {
         bounds.bottom += 28;
       }
       return [bounds];
@@ -2839,15 +2809,14 @@
     const rect = diagram.getBoundingClientRect();
     const viewBox = diagram.viewBox?.baseVal;
     const rootScale = viewBox?.width > 0 && rect.width > 0 ? rect.width / viewBox.width : 1;
-    const scale = (state.zoom > 0 ? state.zoom : 1) * rootScale;
     return {
-      x: (((clientPoint.x - rect.left) / rootScale) + (viewBox?.x || 0)) / (state.zoom > 0 ? state.zoom : 1),
-      y: (((clientPoint.y - rect.top) / rootScale) + (viewBox?.y || 0)) / (state.zoom > 0 ? state.zoom : 1)
+      x: ((clientPoint.x - rect.left) / rootScale) + (viewBox?.x || 0),
+      y: ((clientPoint.y - rect.top) / rootScale) + (viewBox?.y || 0)
     };
   }
 
   function shapeBounds(shape) {
-    const size = effectiveSize(shape, findElement(shape.businessObject));
+    const size = connectionSize(shape, findElement(shape.businessObject));
     return {
       left: shape.x,
       top: shape.y,
@@ -3613,7 +3582,7 @@
       const current = routingShape(shape.businessObject, preview);
       const bounds = shapeBounds(current);
       if ((element.tag.includes('Event') && !isAttachedBoundaryEvent(element))
-        || element.tag === 'BpmnGateway' || element.tag === 'BpmnDatabase' || element.tag === 'BpmnDocument') {
+        || element.tag === 'BpmnDatabase' || element.tag === 'BpmnDocument') {
         bounds.bottom += 28;
       }
       return [{ id: shape.businessObject, bounds }];
@@ -3688,12 +3657,14 @@
     const targetElement = findElement(connection.targetRef);
     const sourceCenter = shapeCenter(sourceShape, sourceElement);
     const targetCenter = shapeCenter(targetShape, targetElement);
-    const firstDirection = bendpoints[0] ?? targetCenter;
-    const lastDirection = bendpoints.at(-1) ?? sourceCenter;
+    const directDirections = directGatewayDirections(sourceShape, sourceElement, targetShape, targetElement, bendpoints);
+    const firstDirection = bendpoints[0] ?? directDirections?.source ?? targetCenter;
+    const lastDirection = bendpoints.at(-1) ?? directDirections?.target ?? sourceCenter;
+    const orthogonal = bendpoints.length > 0 || Boolean(directDirections);
     return [
-      clientBoundaryPoint(sourceShape, sourceElement, firstDirection),
+      clientBoundaryPoint(sourceShape, sourceElement, firstDirection, orthogonal),
       ...bendpoints,
-      clientBoundaryPoint(targetShape, targetElement, lastDirection)
+      clientBoundaryPoint(targetShape, targetElement, lastDirection, orthogonal)
     ];
   }
 
@@ -7488,9 +7459,8 @@
     const view = canvasViewBox(state.canvasWidth, state.canvasHeight, diagramContentBounds());
     state.canvasMinX = view.x;
     state.canvasMinY = view.y;
-    diagram.setAttribute('viewBox', `${view.x} ${view.y} ${view.width} ${view.height}`);
-    diagram.style.width = `${view.width}px`;
-    diagram.style.height = `${view.height}px`;
+    state.canvasView = view;
+    applyZoomLayout();
   }
 
   function fitDiagram() {
@@ -7520,13 +7490,43 @@
     canvasScroller.scrollTop = nextScroll.top;
   }
 
+  function changeZoom(delta) {
+    const previousZoom = Number(state.zoom) || 1;
+    const pointerX = canvasScroller.clientWidth / 2;
+    const pointerY = canvasScroller.clientHeight / 2;
+    setZoom(previousZoom + delta);
+    if (state.zoom === previousZoom) return;
+    const nextScroll = zoomedScrollPosition({
+      scrollLeft: canvasScroller.scrollLeft,
+      scrollTop: canvasScroller.scrollTop,
+      pointerX,
+      pointerY,
+      previousZoom,
+      nextZoom: state.zoom
+    });
+    canvasScroller.scrollLeft = nextScroll.left;
+    canvasScroller.scrollTop = nextScroll.top;
+  }
+
   function setZoom(value) {
-    state.zoom = Math.min(2.5, Math.max(.2, Math.round(value * 10) / 10));
-    viewport.setAttribute('transform', `scale(${state.zoom})`);
+    const numeric = Number(value);
+    state.zoom = Math.min(2.5, Math.max(.2, Math.round((Number.isFinite(numeric) ? numeric : 1) * 10) / 10));
+    applyZoomLayout();
     canvasScroller.style.setProperty('--diagram-grid-size', `${Math.max(2, 10 * state.zoom)}px`);
     zoomResetButton.textContent = `${Math.round(state.zoom * 100)}%`;
     zoomResetButton.title = `Zoom atual: ${Math.round(state.zoom * 100)}%. Clique para ajustar o diagrama.`;
     persistViewState();
+  }
+
+  function applyZoomLayout() {
+    const view = state.canvasView;
+    const zoom = Number(state.zoom) > 0 ? Number(state.zoom) : 1;
+    const width = Math.max(1, Math.ceil(view.width * zoom), canvasScroller.clientWidth || 0);
+    const height = Math.max(1, Math.ceil(view.height * zoom), canvasScroller.clientHeight || 0);
+    diagram.style.width = `${width}px`;
+    diagram.style.height = `${height}px`;
+    diagram.setAttribute('viewBox', `${view.x} ${view.y} ${width / zoom} ${height / zoom}`);
+    viewport.removeAttribute('transform');
   }
 
   function rebuildIndexes(data) {
@@ -7563,6 +7563,10 @@
       width: shape.visualWidth > 0 ? shape.visualWidth : shape.width > 0 ? shape.width : fallback.width,
       height: shape.visualHeight > 0 ? shape.visualHeight : shape.height > 0 ? shape.height : fallback.height
     };
+  }
+  function connectionSize(shape, element) {
+    const visual = effectiveSize(shape, element);
+    return connectionShapeSize(shape, element?.tag === 'BpmnGateway' ? 'gateway' : 'rectangle', visual);
   }
   function errorBadgePosition(shape, element) {
     const { width } = effectiveSize(shape, element);

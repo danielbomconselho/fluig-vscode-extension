@@ -16,6 +16,7 @@ const { taskScriptDefinition } = require('./taskScript');
 const { processGeneralDefinition } = require('./processGeneral');
 const { processVersionDefinition } = require('./processVersion');
 const { processFormDefinition } = require('./processForm');
+const { connectionShapeSize, directOrthogonalDirections, shapeBoundaryPoint } = require('../../media/bpmn/dragGeometry');
 const { processManagerDefinition } = require('./processManager');
 const { processAttachmentSecurityDefinition } = require('./processAttachmentSecurity');
 const { subProcessFormMapDefinition } = require('./subProcessFormMap');
@@ -208,7 +209,7 @@ function supportsDirectSignal(element) {
 }
 
 function center(shape, element) {
-  const size = visualSize(shape, element);
+  const size = connectionSize(shape, element);
   return { x: shape.x + size.width / 2, y: shape.y + size.height / 2 };
 }
 
@@ -218,32 +219,35 @@ function connectionEndpoints(connection, businessById) {
   const targetElement = businessById.get(connection.targetRef);
   const sourceCenter = center(connection.sourceShape, sourceElement);
   const targetCenter = center(connection.targetShape, targetElement);
-  const firstDirection = connection.bendpoints[0] ?? targetCenter;
-  const lastDirection = connection.bendpoints.at(-1) ?? sourceCenter;
+  const directDirections = directGatewayDirections(connection, sourceElement, targetElement);
+  const firstDirection = connection.bendpoints[0] ?? directDirections?.source ?? targetCenter;
+  const lastDirection = connection.bendpoints.at(-1) ?? directDirections?.target ?? sourceCenter;
+  const orthogonal = connection.bendpoints.length > 0 || Boolean(directDirections);
   return {
-    source: boundaryPoint(connection.sourceShape, sourceElement, firstDirection),
-    target: boundaryPoint(connection.targetShape, targetElement, lastDirection)
+    source: boundaryPoint(connection.sourceShape, sourceElement, firstDirection, orthogonal),
+    target: boundaryPoint(connection.targetShape, targetElement, lastDirection, orthogonal)
   };
 }
 
-function boundaryPoint(shape, element, toward) {
-  const size = visualSize(shape, element);
-  const origin = center(shape, element);
-  const dx = toward.x - origin.x;
-  const dy = toward.y - origin.y;
-  if (dx === 0 && dy === 0) return origin;
-  let scale;
-  if (element?.tag?.includes('Event')) {
-    const radius = Math.min(size.width, size.height) / 2;
-    scale = radius / Math.hypot(dx, dy);
-  } else if (element?.tag === 'BpmnGateway') {
-    scale = 1 / ((Math.abs(dx) / (size.width / 2)) + (Math.abs(dy) / (size.height / 2)));
-  } else {
-    const horizontal = dx === 0 ? Number.POSITIVE_INFINITY : (size.width / 2) / Math.abs(dx);
-    const vertical = dy === 0 ? Number.POSITIVE_INFINITY : (size.height / 2) / Math.abs(dy);
-    scale = Math.min(horizontal, vertical);
-  }
-  return { x: origin.x + (dx * scale), y: origin.y + (dy * scale) };
+function directGatewayDirections(connection, sourceElement, targetElement) {
+  if (connection.bendpoints.length || (sourceElement?.tag !== 'BpmnGateway' && targetElement?.tag !== 'BpmnGateway')) return null;
+  return directOrthogonalDirections(
+    { x: connection.sourceShape.x, y: connection.sourceShape.y, ...connectionSize(connection.sourceShape, sourceElement) },
+    { x: connection.targetShape.x, y: connection.targetShape.y, ...connectionSize(connection.targetShape, targetElement) }
+  );
+}
+
+function boundaryPoint(shape, element, toward, orthogonal = false) {
+  const size = connectionSize(shape, element);
+  const kind = element?.tag?.includes('Event')
+    ? 'ellipse'
+    : 'rectangle';
+  return shapeBoundaryPoint({ x: shape.x, y: shape.y, ...size }, toward, kind, orthogonal);
+}
+
+function connectionSize(shape, element) {
+  const visual = visualSize(shape, element);
+  return connectionShapeSize(shape, element?.tag === 'BpmnGateway' ? 'gateway' : 'rectangle', visual);
 }
 
 function visualSize(shape, element) {

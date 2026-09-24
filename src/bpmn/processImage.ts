@@ -2,6 +2,7 @@
 
 const { parseProcess } = require('./processModel');
 const { toWebviewData } = require('./webviewData');
+const { roundedPathData } = require('../../media/bpmn/flowRouter');
 
 const MARGIN = 20;
 const FONT_SIZE = 11;
@@ -60,13 +61,21 @@ function renderProcessImageSvg(source) {
   const minY = Math.min(0, Math.floor(Math.min(...ys, 0) - MARGIN));
   const width = Math.ceil(Math.max(...xs, 0) + MARGIN) - minX;
   const height = Math.ceil(Math.max(...ys, 0) + MARGIN) - minY;
+  const translateX = -minX;
+  const translateY = -minY;
 
   const parts = [
     '<?xml version="1.0" encoding="UTF-8"?>',
-    `<svg xmlns="http://www.w3.org/2000/svg" version="1.1" width="${width}" height="${height}" `
-      + `viewBox="${minX} ${minY} ${width} ${height}" `
-      + `style="font-family:'Arial'; font-size:${FONT_SIZE}px; fill:black; stroke:black">`,
-    `<rect x="${minX}" y="${minY}" width="${width}" height="${height}" fill="#FFFFFF" stroke="none"/>`
+    `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" `
+      + `width="${width}" height="${height}" version="1.0" `
+      + 'contentScriptType="text/ecmascript" contentStyleType="text/css" '
+      + 'preserveAspectRatio="xMidYMid meet" zoomAndPan="magnify" '
+      + 'style="stroke-dasharray:none; shape-rendering:auto; font-family:\'Arial\'; text-rendering:auto; '
+      + 'fill-opacity:1; color-interpolation:auto; color-rendering:auto; font-size:12; fill:black; stroke:black; '
+      + 'image-rendering:auto; stroke-miterlimit:10; stroke-linecap:square; stroke-linejoin:miter; font-style:normal; '
+      + 'stroke-width:1; stroke-dashoffset:0; font-weight:normal; stroke-opacity:1;">',
+    `<rect x="0" y="0" width="${width}" height="${height}" fill="#FFFFFF" stroke="none"/>`,
+    `<g transform="translate(${n(translateX)} ${n(translateY)})">`
   ];
   for (const { shape, element } of shapes) {
     parts.push(renderShape(shape, element));
@@ -74,7 +83,7 @@ function renderProcessImageSvg(source) {
   for (const item of connections) {
     parts.push(renderConnection(item));
   }
-  parts.push('</svg>', '');
+  parts.push('</g>', '</svg>', '');
   return parts.join('\n');
 }
 
@@ -107,15 +116,16 @@ function renderShape(shape, element) {
   if (element.tag.includes('Event')) {
     const radius = Math.min(width, height) / 2;
     const strokeWidth = element.tag === 'BpmnEndEvent' ? 3 : 1;
+    const colors = eventColors(element.tag);
     const inner = element.tag === 'BpmnIntermediateEvent'
-      ? `<circle cx="${n(cx)}" cy="${n(cy)}" r="${n(radius - 3)}" fill="none" stroke="${STROKE}"/>`
+      ? `<circle cx="${n(cx)}" cy="${n(cy)}" r="${n(radius - 3)}" fill="none" stroke="${colors.stroke}"/>`
       : '';
-    return `${open}<ellipse cx="${n(cx)}" cy="${n(cy)}" rx="${n(radius)}" ry="${n(radius)}" fill="#FFFFFF" stroke="${STROKE}" stroke-width="${strokeWidth}"/>${inner}</g>`
+    return `${open}<ellipse cx="${n(cx)}" cy="${n(cy)}" rx="${n(radius)}" ry="${n(radius)}" fill="${colors.fill}" stroke="${colors.stroke}" stroke-width="${strokeWidth}"/>${inner}${eventMarker(element, cx, cy, colors.marker)}</g>`
       + label(textBelow(element.name, cx, y + height, width));
   }
   if (element.tag === 'BpmnGateway') {
     const diamond = [[cx, y], [x + width, cy], [cx, y + height], [x, cy]];
-    return `${open}<polygon points="${points(diamond)}" fill="#FFFFFF" stroke="${STROKE}"/>${gatewayMarker(element.type, cx, cy)}</g>`
+    return `${open}<polygon points="${points(diamond)}" fill="#FFFFE1" stroke="${STROKE}"/>${gatewayMarker(element.type, cx, cy)}</g>`
       + label(textBelow(element.name, cx, y + height, width));
   }
   if (element.tag === 'BpmnDocument') {
@@ -140,18 +150,69 @@ function renderShape(shape, element) {
     ? `<rect x="${n(cx - 6)}" y="${n(y + height - 14)}" width="12" height="12" fill="none" stroke="${STROKE}"/>`
       + `<path d="M ${n(cx - 4)} ${n(y + height - 8)} H ${n(cx + 4)} M ${n(cx)} ${n(y + height - 12)} V ${n(y + height - 4)}" stroke="${STROKE}"/>`
     : '';
-  return `${open}<rect x="${n(x)}" y="${n(y)}" width="${n(width)}" height="${n(height)}" rx="8" ry="8" fill="#FFFFFF" stroke="${STROKE}" stroke-width="${strokeWidth}"/>${marker}</g>`
+  return `${open}<rect x="${n(x)}" y="${n(y)}" width="${n(width)}" height="${n(height)}" rx="8" ry="8" fill="#EDF5FF" stroke="#172080" stroke-width="${strokeWidth}"/>${marker}</g>`
     + label(textBlock(wrapText(element.name, width - 8), cx, cy));
 }
 
 function gatewayMarker(type, cx, cy) {
-  if (type === '120') {
-    return `<path d="M ${n(cx - 8)} ${n(cy - 8)} L ${n(cx + 8)} ${n(cy + 8)} M ${n(cx + 8)} ${n(cy - 8)} L ${n(cx - 8)} ${n(cy + 8)}" stroke="${STROKE}" stroke-width="3"/>`;
-  }
+  if (type === '120') return '';
   if (type === '121') {
     return `<circle cx="${n(cx)}" cy="${n(cy)}" r="10" fill="none" stroke="${STROKE}" stroke-width="3"/>`;
   }
   return `<path d="M ${n(cx - 10)} ${n(cy)} H ${n(cx + 10)} M ${n(cx)} ${n(cy - 10)} V ${n(cy + 10)}" stroke="${STROKE}" stroke-width="3"/>`;
+}
+
+function eventColors(tag) {
+  if (tag === 'BpmnStartEvent') return { fill: '#80FF80', stroke: '#16873C', marker: '#137535' };
+  if (tag === 'BpmnIntermediateEvent') return { fill: '#FFFF83', stroke: '#AFA900', marker: '#6B6500' };
+  return { fill: '#DC6468', stroke: '#8E2930', marker: '#701E23' };
+}
+
+function eventMarker(element, cx, cy, color) {
+  const key = `${element.tag}:${element.type}`;
+  const stroke = `stroke="${color}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"`;
+  if (['BpmnStartEvent:12', 'BpmnIntermediateEvent:32'].includes(key)) {
+    const ticks = [[0, -8, 0, -6], [8, 0, 6, 0], [0, 8, 0, 6], [-8, 0, -6, 0]]
+      .map(([x1, y1, x2, y2]) => `<line x1="${n(cx + x1)}" y1="${n(cy + y1)}" x2="${n(cx + x2)}" y2="${n(cy + y2)}" ${stroke}/>`)
+      .join('');
+    return `<circle cx="${n(cx)}" cy="${n(cy)}" r="8" fill="none" ${stroke}/>`
+      + `<line x1="${n(cx)}" y1="${n(cy)}" x2="${n(cx)}" y2="${n(cy - 5)}" ${stroke}/>`
+      + `<line x1="${n(cx)}" y1="${n(cy)}" x2="${n(cx + 4)}" y2="${n(cy + 2)}" ${stroke}/>${ticks}`;
+  }
+  if (['BpmnStartEvent:13', 'BpmnIntermediateEvent:35'].includes(key)) {
+    const lines = [-4, 0, 4]
+      .map((offset) => `<line x1="${n(cx - 4)}" y1="${n(cy + offset)}" x2="${n(cx + 4)}" y2="${n(cy + offset)}" ${stroke}/>`)
+      .join('');
+    return `<rect x="${n(cx - 7)}" y="${n(cy - 9)}" width="14" height="18" rx="1" fill="none" ${stroke}/>${lines}`;
+  }
+  if (['BpmnStartEvent:14', 'BpmnEndEvent:64', 'BpmnIntermediateEvent:37', 'BpmnIntermediateEvent:41'].includes(key)) {
+    const filled = ['BpmnEndEvent:64', 'BpmnIntermediateEvent:37'].includes(key);
+    return `<polygon points="${points([[cx, cy - 9], [cx + 9, cy + 7], [cx - 9, cy + 7]])}" fill="${filled ? color : 'none'}" ${stroke}/>`;
+  }
+  if (['BpmnStartEvent:16', 'BpmnEndEvent:66', 'BpmnIntermediateEvent:39'].includes(key)) {
+    const polygon = Array.from({ length: 5 }, (_, index) => {
+      const angle = (-90 + (index * 72)) * Math.PI / 180;
+      return [cx + Math.cos(angle) * 9, cy + Math.sin(angle) * 9];
+    });
+    return `<polygon points="${points(polygon)}" fill="${key === 'BpmnStartEvent:16' ? 'none' : color}" ${stroke}/>`;
+  }
+  if (['BpmnEndEvent:63', 'BpmnIntermediateEvent:43'].includes(key)) {
+    return `<polyline points="${points([[cx + 3, cy - 10], [cx - 4, cy - 1], [cx + 1, cy + 1], [cx - 3, cy + 10], [cx + 6, cy - 2], [cx + 1, cy - 3]])}" fill="none" ${stroke}/>`;
+  }
+  if (key === 'BpmnEndEvent:65') {
+    return `<path d="M ${n(cx - 7)} ${n(cy - 7)} L ${n(cx + 7)} ${n(cy + 7)} M ${n(cx + 7)} ${n(cy - 7)} L ${n(cx - 7)} ${n(cy + 7)}" fill="none" ${stroke}/>`;
+  }
+  if (key === 'BpmnEndEvent:68') {
+    return `<circle cx="${n(cx)}" cy="${n(cy)}" r="9" fill="${color}" stroke="${color}"/>`;
+  }
+  if (['BpmnIntermediateEvent:36', 'BpmnIntermediateEvent:42'].includes(key)) {
+    const forward = key.endsWith(':36');
+    const d = forward
+      ? `M ${n(cx - 9)} ${n(cy - 5)} H ${n(cx + 1)} V ${n(cy - 9)} L ${n(cx + 10)} ${n(cy)} L ${n(cx + 1)} ${n(cy + 9)} V ${n(cy + 5)} H ${n(cx - 9)} Z`
+      : `M ${n(cx + 9)} ${n(cy - 5)} H ${n(cx - 1)} V ${n(cy - 9)} L ${n(cx - 10)} ${n(cy)} L ${n(cx - 1)} ${n(cy + 9)} V ${n(cy + 5)} H ${n(cx + 9)} Z`;
+    return `<path d="${d}" fill="${color}" stroke="${color}"/>`;
+  }
+  return '';
 }
 
 function renderConnection({ connection, element, points: path }) {
@@ -175,7 +236,7 @@ function renderConnection({ connection, element, points: path }) {
     label = textBlock([element.name], middle.x, middle.y - LINE_HEIGHT / 2 - 2);
   }
   return `<g id="${escapeXml(connection.businessObject)}">`
-    + `<polyline points="${points(path.map((point) => [point.x, point.y]))}" fill="none" stroke="${STROKE}"/>`
+    + `<path d="${roundedPathData(path)}" fill="none" stroke="${STROKE}" stroke-linecap="round" stroke-linejoin="round"/>`
     + `<polygon points="${points(arrow)}" fill="${STROKE}" stroke="${STROKE}"/></g>`
     + label;
 }

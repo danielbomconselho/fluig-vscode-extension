@@ -8,6 +8,96 @@
 
   const DIRECTIONS = ['left', 'right', 'top', 'bottom'];
 
+  function roundedPathData(points, radius = 12) {
+    return roundedBridgedPathData(points, [], radius);
+  }
+
+  function roundedBridgedPathData(points, crossings = [], radius = 12, bridgeRadius = 6) {
+    if (!Array.isArray(points) || !points.length) return '';
+    if (points.length === 1) return `M ${precise(points[0].x)} ${precise(points[0].y)}`;
+
+    const corners = points.map((_point, index) => roundedCorner(points, index, radius));
+    const crossingsBySegment = new Map();
+    for (const crossing of crossings) {
+      const values = crossingsBySegment.get(crossing.segmentIndex) ?? [];
+      values.push(crossing.point);
+      crossingsBySegment.set(crossing.segmentIndex, values);
+    }
+
+    let data = `M ${precise(points[0].x)} ${precise(points[0].y)}`;
+    for (let index = 0; index < points.length - 1; index += 1) {
+      const from = points[index];
+      const to = points[index + 1];
+      const segmentStart = corners[index]?.exit ?? from;
+      const segmentEnd = corners[index + 1]?.entry ?? to;
+      const dx = to.x - from.x;
+      const dy = to.y - from.y;
+      const length = Math.hypot(dx, dy);
+      const unitX = length ? dx / length : 0;
+      const unitY = length ? dy / length : 0;
+      let normalX = -unitY;
+      let normalY = unitX;
+      const flipNormal = Math.abs(normalY) > 0.1 ? normalY > 0 : normalX < 0;
+      if (flipNormal) {
+        normalX *= -1;
+        normalY *= -1;
+      }
+      const startDistance = distanceAlong(from, segmentStart, unitX, unitY);
+      const endDistance = distanceAlong(from, segmentEnd, unitX, unitY);
+      const orderedCrossings = [...(crossingsBySegment.get(index) ?? [])]
+        .map((point) => ({ point, distance: distanceAlong(from, point, unitX, unitY) }))
+        .filter((item) => (
+          item.distance - bridgeRadius > startDistance
+          && item.distance + bridgeRadius < endDistance
+        ))
+        .sort((left, right) => left.distance - right.distance);
+
+      for (const { point } of orderedCrossings) {
+        data += ` L ${precise(point.x - (unitX * bridgeRadius))} ${precise(point.y - (unitY * bridgeRadius))}`;
+        data += ` Q ${precise(point.x + (normalX * bridgeRadius))} ${precise(point.y + (normalY * bridgeRadius))}`;
+        data += ` ${precise(point.x + (unitX * bridgeRadius))} ${precise(point.y + (unitY * bridgeRadius))}`;
+      }
+      data += ` L ${precise(segmentEnd.x)} ${precise(segmentEnd.y)}`;
+      const corner = corners[index + 1];
+      if (corner) {
+        data += ` Q ${precise(to.x)} ${precise(to.y)} ${precise(corner.exit.x)} ${precise(corner.exit.y)}`;
+      }
+    }
+    return data;
+  }
+
+  function roundedCorner(points, index, radius) {
+    if (index <= 0 || index >= points.length - 1 || radius <= 0) return null;
+    const previous = points[index - 1];
+    const current = points[index];
+    const next = points[index + 1];
+    const incoming = { x: current.x - previous.x, y: current.y - previous.y };
+    const outgoing = { x: next.x - current.x, y: next.y - current.y };
+    const incomingLength = Math.hypot(incoming.x, incoming.y);
+    const outgoingLength = Math.hypot(outgoing.x, outgoing.y);
+    if (incomingLength < 0.001 || outgoingLength < 0.001) return null;
+    const incomingUnit = { x: incoming.x / incomingLength, y: incoming.y / incomingLength };
+    const outgoingUnit = { x: outgoing.x / outgoingLength, y: outgoing.y / outgoingLength };
+    const directionCross = cross(incomingUnit, outgoingUnit);
+    const directionDot = (incomingUnit.x * outgoingUnit.x) + (incomingUnit.y * outgoingUnit.y);
+    if (Math.abs(directionCross) < 0.001 || directionDot < -0.999) return null;
+    const cut = Math.min(radius, incomingLength / 2, outgoingLength / 2);
+    return {
+      entry: {
+        x: current.x - (incomingUnit.x * cut),
+        y: current.y - (incomingUnit.y * cut)
+      },
+      exit: {
+        x: current.x + (outgoingUnit.x * cut),
+        y: current.y + (outgoingUnit.y * cut)
+      }
+    };
+  }
+
+  function distanceAlong(origin, point, unitX, unitY) {
+    return ((point.x - origin.x) * unitX) + ((point.y - origin.y) * unitY);
+  }
+
   function defaultFlowMarkerSegment(points, along = 10, halfSize = 5) {
     const source = points?.[0];
     if (!source) return null;
@@ -394,5 +484,14 @@
     }
   }
 
-  return { DIRECTIONS, defaultFlowMarkerSegment, findOrthogonalCrossings, polylineSegments, routeOrthogonal, simplifyPolyline };
+  return {
+    DIRECTIONS,
+    defaultFlowMarkerSegment,
+    findOrthogonalCrossings,
+    polylineSegments,
+    roundedBridgedPathData,
+    roundedPathData,
+    routeOrthogonal,
+    simplifyPolyline
+  };
 }));

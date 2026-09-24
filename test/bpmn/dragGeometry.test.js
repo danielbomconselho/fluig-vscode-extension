@@ -3,8 +3,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
-  bestContextPadPosition, canvasViewBox, constrainedAttachedDelta, edgeScrollVelocity, expandedCanvas, fittedCanvas, fullyContained,
-  normalizedRectangle, snappedDragDelta, snappedPointDelta, zoomedScrollPosition
+  bestContextPadPosition, canvasViewBox, connectionShapeSize, constrainedAttachedDelta, directOrthogonalDirections, edgeScrollVelocity, expandedCanvas, fittedCanvas, fullyContained,
+  normalizedRectangle, shapeBoundaryPoint, snappedDragDelta, snappedPointDelta, zoomedScrollPosition
 } = require('../../media/bpmn/dragGeometry');
 
 test('posiciona o menu do evento anexado para fora da atividade proprietaria', () => {
@@ -130,5 +130,59 @@ test('mantém o ponto sob o cursor ao aplicar zoom com a roda do mouse', () => {
       nextZoom: 0.2
     }),
     { left: 0, top: 0 }
+  );
+});
+
+test('projeta conexões ortogonais na borda real do losango', () => {
+  const bounds = { x: 450, y: 230, width: 60, height: 60 };
+  assert.deepEqual(
+    shapeBoundaryPoint(bounds, { x: -217, y: 281 }, 'diamond', true),
+    { x: 471, y: 281 }
+  );
+  assert.deepEqual(
+    shapeBoundaryPoint(bounds, { x: 479, y: 577 }, 'diamond', true),
+    { x: 479, y: 289 }
+  );
+});
+
+test('mantém o último segmento ortogonal ao recortar eventos', () => {
+  const point = shapeBoundaryPoint(
+    { x: 952.5, y: 42.5, width: 35, height: 35 },
+    { x: 991, y: 48 },
+    'ellipse',
+    true
+  );
+  assert.equal(point.y, 48);
+  assert.ok(point.x > 980 && point.x < 988);
+});
+
+test('usa o retangulo vertical completo do gateway para conectar como o Eclipse', () => {
+  const first = { x: 125, y: 949, width: 60, height: 102 };
+  const second = { x: 335, y: 956, width: 60, height: 88 };
+  const firstSize = connectionShapeSize(first, 'gateway', { width: 60, height: 60 });
+  const secondSize = connectionShapeSize(second, 'gateway', { width: 60, height: 60 });
+  const firstCenter = { x: first.x + firstSize.width / 2, y: first.y + firstSize.height / 2 };
+  const secondCenter = { x: second.x + secondSize.width / 2, y: second.y + secondSize.height / 2 };
+
+  assert.deepEqual(firstSize, { width: 60, height: 102 });
+  assert.deepEqual(secondSize, { width: 60, height: 88 });
+  assert.equal(firstCenter.y, secondCenter.y);
+  assert.deepEqual(
+    shapeBoundaryPoint({ ...first, ...firstSize }, secondCenter, 'rectangle'),
+    { x: 185, y: 1000 }
+  );
+  assert.deepEqual(
+    shapeBoundaryPoint({ ...second, ...secondSize }, firstCenter, 'rectangle'),
+    { x: 335, y: 1000 }
+  );
+  assert.deepEqual(
+    directOrthogonalDirections(
+      { x: 533, y: 949, width: 60, height: 102 },
+      { x: 691, y: 950, width: 60, height: 102 }
+    ),
+    {
+      source: { x: 721, y: 1000.5 },
+      target: { x: 563, y: 1000.5 }
+    }
   );
 });

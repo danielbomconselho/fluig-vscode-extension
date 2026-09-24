@@ -160,6 +160,102 @@
     };
   }
 
+  function shapeBoundaryPoint(bounds, toward, kind = 'rectangle', orthogonal = false) {
+    const left = Number(bounds?.x) || 0;
+    const top = Number(bounds?.y) || 0;
+    const width = Math.max(0, Number(bounds?.width) || 0);
+    const height = Math.max(0, Number(bounds?.height) || 0);
+    const halfWidth = width / 2;
+    const halfHeight = height / 2;
+    const center = { x: left + halfWidth, y: top + halfHeight };
+    const dx = (Number(toward?.x) || 0) - center.x;
+    const dy = (Number(toward?.y) || 0) - center.y;
+    if ((!dx && !dy) || !halfWidth || !halfHeight) return center;
+    if (orthogonal) return orthogonalBoundaryPoint(center, halfWidth, halfHeight, toward, kind, dx, dy);
+
+    let scale;
+    if (kind === 'ellipse') {
+      scale = 1 / Math.sqrt(((dx * dx) / (halfWidth * halfWidth)) + ((dy * dy) / (halfHeight * halfHeight)));
+    } else if (kind === 'diamond') {
+      scale = 1 / ((Math.abs(dx) / halfWidth) + (Math.abs(dy) / halfHeight));
+    } else {
+      const horizontal = halfWidth / Math.abs(dx || Number.EPSILON);
+      const vertical = halfHeight / Math.abs(dy || Number.EPSILON);
+      scale = Math.min(horizontal, vertical);
+    }
+    return { x: center.x + (dx * scale), y: center.y + (dy * scale) };
+  }
+
+  function connectionShapeSize(shape, kind = 'rectangle', visualSize = {}) {
+    const visualWidth = positiveDimension(visualSize?.width, shape?.visualWidth, shape?.width);
+    const visualHeight = positiveDimension(visualSize?.height, shape?.visualHeight, shape?.height);
+    if (kind !== 'gateway') return { width: visualWidth, height: visualHeight };
+    return {
+      width: positiveDimension(shape?.width, visualWidth),
+      height: positiveDimension(shape?.height, visualHeight + 28)
+    };
+  }
+
+  function directOrthogonalDirections(sourceBounds, targetBounds) {
+    const source = normalizedBounds(sourceBounds);
+    const target = normalizedBounds(targetBounds);
+    const sourceCenter = { x: (source.left + source.right) / 2, y: (source.top + source.bottom) / 2 };
+    const targetCenter = { x: (target.left + target.right) / 2, y: (target.top + target.bottom) / 2 };
+    const overlapTop = Math.max(source.top, target.top);
+    const overlapBottom = Math.min(source.bottom, target.bottom);
+    if ((source.right <= target.left || target.right <= source.left) && overlapTop <= overlapBottom) {
+      const y = clamp((sourceCenter.y + targetCenter.y) / 2, overlapTop, overlapBottom);
+      return {
+        source: { x: targetCenter.x, y },
+        target: { x: sourceCenter.x, y }
+      };
+    }
+    const overlapLeft = Math.max(source.left, target.left);
+    const overlapRight = Math.min(source.right, target.right);
+    if ((source.bottom <= target.top || target.bottom <= source.top) && overlapLeft <= overlapRight) {
+      const x = clamp((sourceCenter.x + targetCenter.x) / 2, overlapLeft, overlapRight);
+      return {
+        source: { x, y: targetCenter.y },
+        target: { x, y: sourceCenter.y }
+      };
+    }
+    return null;
+  }
+
+  function normalizedBounds(bounds) {
+    const left = Number(bounds?.x ?? bounds?.left) || 0;
+    const top = Number(bounds?.y ?? bounds?.top) || 0;
+    const width = Math.max(0, Number(bounds?.width) || 0);
+    const height = Math.max(0, Number(bounds?.height) || 0);
+    return {
+      left,
+      top,
+      right: Number.isFinite(Number(bounds?.right)) ? Number(bounds.right) : left + width,
+      bottom: Number.isFinite(Number(bounds?.bottom)) ? Number(bounds.bottom) : top + height
+    };
+  }
+
+  function orthogonalBoundaryPoint(center, halfWidth, halfHeight, toward, kind, dx, dy) {
+    const horizontal = (Math.abs(dx) / halfWidth) >= (Math.abs(dy) / halfHeight);
+    if (horizontal) {
+      const y = clamp(Number(toward?.y) || center.y, center.y - halfHeight, center.y + halfHeight);
+      const offset = boundaryOffset(kind, halfWidth, halfHeight, Math.abs(y - center.y), true);
+      return { x: center.x + (dx < 0 ? -offset : offset), y };
+    }
+    const x = clamp(Number(toward?.x) || center.x, center.x - halfWidth, center.x + halfWidth);
+    const offset = boundaryOffset(kind, halfWidth, halfHeight, Math.abs(x - center.x), false);
+    return { x, y: center.y + (dy < 0 ? -offset : offset) };
+  }
+
+  function boundaryOffset(kind, halfWidth, halfHeight, crossOffset, horizontal) {
+    const primary = horizontal ? halfWidth : halfHeight;
+    const cross = horizontal ? halfHeight : halfWidth;
+    const ratio = cross ? Math.min(1, crossOffset / cross) : 1;
+    if (kind === 'ellipse') return primary * Math.sqrt(Math.max(0, 1 - (ratio * ratio)));
+    if (kind === 'diamond') return primary * (1 - ratio);
+    return primary;
+  }
+
   function bestContextPadPosition({ anchor, panel, obstacles = [], preferredEdge = 'bottom', canvas = {}, gap = 6, margin = 8 }) {
     const panelWidth = Math.max(0, Number(panel?.width) || 0);
     const panelHeight = Math.max(0, Number(panel?.height) || 0);
@@ -220,6 +316,14 @@
     return Math.min(maximum, Math.max(minimum, value));
   }
 
+  function positiveDimension(...values) {
+    for (const value of values) {
+      const number = Number(value);
+      if (Number.isFinite(number) && number > 0) return number;
+    }
+    return 0;
+  }
+
   function snap(value, grid) {
     if (!Number.isFinite(grid) || grid <= 0) return value;
     return Math.round(value / grid) * grid;
@@ -229,8 +333,10 @@
     alignedCenterPositions,
     bestContextPadPosition,
     canvasViewBox,
+    connectionShapeSize,
     constrainedAttachedDelta,
     constrainedInsideDelta,
+    directOrthogonalDirections,
     edgeScrollVelocity,
     expandedCanvas,
     fittedCanvas,
@@ -239,6 +345,7 @@
     snappedDragDelta,
     snappedPointDelta,
     snappedResizeSize,
+    shapeBoundaryPoint,
     zoomedScrollPosition
   };
 }));

@@ -390,11 +390,18 @@ test('arraste usa a transformação SVG real e canvas é reajustado ao conteúdo
 
 test('canvas oferece zoom centralizado pelo cursor com Ctrl e roda do mouse', () => {
   const source = fs.readFileSync(path.join(__dirname, '..', '..', 'media', 'bpmn', 'editor.js'), 'utf8');
+  const styles = fs.readFileSync(path.join(__dirname, '..', '..', 'media', 'bpmn', 'editor.css'), 'utf8');
   assert.match(source, /canvasScroller\.addEventListener\('wheel', handleCanvasWheel, \{ passive: false \}\)/);
   assert.match(source, /if \(!event\.ctrlKey && !event\.metaKey\) return/);
   assert.match(source, /event\.preventDefault\(\)/);
   assert.match(source, /zoomedScrollPosition/);
   assert.match(source, /event\.deltaY < 0 \? 0\.1 : -0\.1/);
+  assert.match(source, /changeZoom\(0\.1\)/);
+  assert.match(source, /changeZoom\(-0\.1\)/);
+  assert.match(source, /function applyZoomLayout\(\)/);
+  assert.match(source, /diagram\.style\.width = `\$\{width\}px`/);
+  assert.match(source, /viewport\.removeAttribute\('transform'\)/);
+  assert.doesNotMatch(styles, /#diagram \{[^}]*min-width: 100%/);
 });
 
 test('editor permite escolher e persistir uma cor de fundo com grade contrastante', () => {
