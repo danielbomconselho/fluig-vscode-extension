@@ -277,7 +277,21 @@ export class FormService {
             return;
         }
 
-        const formFolderName: string = fileUri.path.replace(/.*\/forms\/([^/]+).*/, "$1");
+        const formFolder = Uri.joinPath(UtilsService.getWorkspaceUri(), 'forms', fileUri.path.replace(/.*\/forms\/([^/]+).*/, "$1")).fsPath;
+        const formName = basename(formFolder).replace(/^(?:\d+ - )?(\w+)$/, "$1");
+
+        try {
+            const documentId = await FormService.publishForm(context, server, formFolder);
+            if (documentId !== undefined) {
+                window.showInformationMessage(`Formulário ${formName} exportado com sucesso!`);
+            }
+        } catch (err: any) {
+            window.showErrorMessage(err?.message || "Erro ao exportar Formulário.");
+        }
+    }
+
+    public static async publishForm(context: ExtensionContext, server: ServerDTO, formFolder: string): Promise<number | undefined> {
+        const formFolderName = basename(formFolder);
 
         // Remove possível documentid da frente do formulário (quando importado pelo Eclipse)
         const formName = formFolderName.replace(/^(?:\d+ - )?(\w+)$/, "$1");
@@ -285,7 +299,7 @@ export class FormService {
         const selectedForm = await FormService.getExportFormSelected(server, formName);
 
         if (!selectedForm) {
-            return;
+            return undefined;
         }
 
         const params = selectedForm === "novo"
@@ -294,10 +308,9 @@ export class FormService {
         ;
 
         if (params === null) {
-            return;
+            return undefined;
         }
 
-        const formFolder = Uri.joinPath(UtilsService.getWorkspaceUri(), 'forms', formFolderName).fsPath;
         const isEvent = /[/\\]events$/;
 
         for (let attachmentPath of glob.sync(`${formFolder}/**/*.*`, {
@@ -323,22 +336,22 @@ export class FormService {
             params.customEvents.item.push(customEvent);
         }
 
-        try {
-            const client = await LoginService.createAuthenticatedClientAsync(server, FormService.getUri(server));
-            const response = selectedForm === "novo"
-                ? await client.createSimpleCardIndexWithDatasetPersisteTypeAsync(params)
-                : await client.updateSimpleCardIndexWithDatasetAndGeneralInfoAsync(params)
-            ;
+        const client = await LoginService.createAuthenticatedClientAsync(server, FormService.getUri(server));
+        const response = selectedForm === "novo"
+            ? await client.createSimpleCardIndexWithDatasetPersisteTypeAsync(params)
+            : await client.updateSimpleCardIndexWithDatasetAndGeneralInfoAsync(params)
+        ;
 
-            const message = response[0]?.result?.item?.webServiceMessage;
-            if (message === 'ok') {
-                window.showInformationMessage(`Formulário ${formName} exportado com sucesso!`);
-            } else {
-                window.showErrorMessage(message || 'Verifique o id da Pasta onde irá salvar o Formulário!');
-            }
-        } catch (err) {
-            window.showErrorMessage("Erro ao exportar Formulário.");
+        const item = response[0]?.result?.item;
+        const message = item?.webServiceMessage;
+        if (message !== 'ok') {
+            throw new Error(message || 'Verifique o id da Pasta onde irá salvar o Formulário!');
         }
+        const documentId = Number(selectedForm === "novo" ? item?.documentId : selectedForm.documentId);
+        if (!Number.isInteger(documentId) || documentId <= 0) {
+            throw new Error(`O servidor não retornou o documentId do formulário ${formName}.`);
+        }
+        return documentId;
     }
 
     private static async getCreateFormParams(context: ExtensionContext, server: ServerDTO, formName: string): Promise<FormDTO|null> {
