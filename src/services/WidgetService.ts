@@ -1,7 +1,8 @@
-import { Uri, window, workspace, FileType, ProgressLocation } from "vscode";
+import { Uri, window, workspace, FileType, ProgressLocation, extensions } from "vscode";
 import { readFileSync } from "fs";
 import { glob } from "glob";
 import { basename } from "path";
+import { createHash } from 'crypto';
 import * as JSZip from "jszip";
 import { UtilsService } from "../services/UtilsService";
 import { TemplateService } from "../services/TemplateService";
@@ -10,11 +11,13 @@ import {LoginService} from "./LoginService";
 import { ServerDTO } from "../models/ServerDTO";
 import { WidgetFluiggersDTO } from "../models/WidgetFluiggersDTO";
 
+const { artifactFolderPath } = require("./projectRoot");
+
 export class WidgetService {
     /**
      * Create Widget
      */
-    public static async create() {
+    public static async create(resourceUri?: Uri) {
         const widgetName: string = await window.showInputBox({
             prompt: "Qual o nome do Widget (sem espaços e sem caracteres especiais)?",
             placeHolder: "NomeWidget"
@@ -25,9 +28,10 @@ export class WidgetService {
         }
 
         const widgetFileName = "view.ftl";
+        const projectUri = await UtilsService.getProjectUri(resourceUri);
 
         const widgetUriFile = Uri.joinPath(
-            UtilsService.getWorkspaceUri(),
+            projectUri,
             "wcm",
             "widget",
             widgetName,
@@ -48,7 +52,7 @@ export class WidgetService {
         const propertiesLanguages = ["en_US", "es", "pt_BR"];
 
         const widgetUri = Uri.joinPath(
-            UtilsService.getWorkspaceUri(),
+            projectUri,
             "wcm",
             "widget",
             widgetName
@@ -123,12 +127,7 @@ export class WidgetService {
 
         const widgetName: string = fileUri.path.replace(/.*\/widget\/([^/]+).*/, "$1");
 
-        const widgetUri = Uri.joinPath(
-            UtilsService.getWorkspaceUri(),
-            "wcm",
-            "widget",
-            widgetName
-        );
+        const widgetUri = fileUri.with({ path: artifactFolderPath(fileUri.path, "widget") });
 
         const zipStream = new JSZip();
         zipStream.folder("WEB-INF");
@@ -216,10 +215,25 @@ export class WidgetService {
         }
 
         try {
-            const downloadedWidget = await fetch("https://raw.githubusercontent.com/fluiggers/fluig-widget-helper/refs/heads/master/target/fluiggersWidget.war")
+            const myExtension = extensions.getExtension("Fluiggers.fluiggers-fluig-vscode-extension");
+
+            if (!myExtension) {
+                throw new Error("Não foi possível carregar os dados da extensão");
+            }
+
+            const widgetProperties = myExtension.packageJSON.contributes.FluiggersWidget;
+
+            const downloadedWidget = await fetch(widgetProperties.url)
 
             if (!downloadedWidget.ok || !downloadedWidget.body) {
                 throw new Error("Não foi possível baixar a widget do GitHub");
+            }
+
+            const blob = await downloadedWidget.blob();
+            const checkSum = await WidgetService.getBlobChecksum(blob);
+
+            if (widgetProperties.sha256 !== checkSum) {
+                throw new Error("Arquivo do GitHub não compatível com essa versão da Extensão");
             }
 
             const url = `${UtilsService.getHost(server)}/portal/api/rest/wcmservice/rest/product/uploadfile`;
@@ -227,7 +241,7 @@ export class WidgetService {
             const formData = new FormData();
             formData.append("fileName", "fluiggersWidget.war");
             formData.append("fileDescription", "WCM Eclipse Plugin Deploy Artifact");
-            formData.append("attachment", await downloadedWidget.blob(), "fluiggersWidget.war");
+            formData.append("attachment", blob, "fluiggersWidget.war");
 
             const response:any = await fetch(
                 url,
@@ -260,7 +274,7 @@ export class WidgetService {
     /**
      * Importa as wigets indicadas selecionadas
      */
-    public static async import() {
+    public static async import(resourceUri?: Uri) {
         try {
             const server = await ServerService.getSelect();
 
@@ -274,6 +288,7 @@ export class WidgetService {
                 return;
             }
 
+            const projectUri = await UtilsService.getProjectUri(resourceUri);
             const results = await window.withProgress(
                 {
                     location: ProgressLocation.Notification,
@@ -290,7 +305,7 @@ export class WidgetService {
                         try {
                             const zipFile = await JSZip.loadAsync(await WidgetService.downloadWidgetFile(server, widget.filename));
 
-                            const widgetUri = Uri.joinPath(UtilsService.getWorkspaceUri(), "wcm", "widget", widget.code);
+                            const widgetUri = Uri.joinPath(projectUri, "wcm", "widget", widget.code);
 
                             try {
                                 await workspace.fs.delete(widgetUri, { recursive: true, useTrash: true });
@@ -327,9 +342,7 @@ export class WidgetService {
             );
 
             window.showInformationMessage(
-                results.length > 1
-                ? `${results.length} widgets foram importadas.`
-                : "1 widget foi importada."
+                `${results.length} widget(s) importada(s) em ${workspace.asRelativePath(Uri.joinPath(projectUri, "wcm", "widget"))}.`
             );
         } catch (error: any) {
             window.showErrorMessage(error.message || error);
@@ -449,5 +462,11 @@ export class WidgetService {
             }
             return r.arrayBuffer();
         })
+    }
+
+    public static async getBlobChecksum(blob: Blob): Promise<string> {
+        const arrayBuffer = await blob.arrayBuffer();
+        const buffer = Buffer.from(arrayBuffer);
+        return createHash("sha256").update(buffer).digest('hex');
     }
 }

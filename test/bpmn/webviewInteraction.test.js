@@ -61,12 +61,15 @@ test('processo controla segurança de anexos com mecanismos e seis permissões',
   assert.match(source, /Não controlar segurança/);
   assert.match(source, /process-attachment-security-permissions/);
   assert.match(source, /function createGatewayConfigCatalogPicker/);
-  assert.match(source, /if \(!items\.length\) return createGatewayConfigInput/);
+  assert.match(source, /if \(!options\.length\) {\s*input\.placeholder = emptyPlaceholder;/);
   assert.match(source, /document\.createElement\('select'\)/);
   assert.match(source, /state\.data\?\.userCatalog \?\? \[\]/);
   assert.match(source, /state\.data\?\.roleCatalog \?\? \[\]/);
   assert.match(source, /state\.data\?\.groupCatalog \?\? \[\]/);
   assert.match(source, /function createGatewayAssociationValue/);
+  assert.match(source, /function createCatalogAutocompleteInput/);
+  assert.match(source, /document\.createElement\('datalist'\)/);
+  assert.match(source, /input\.setAttribute\('list', list\.id\)/);
   assert.match(source, /type: 'updateProcessAttachmentSecurity'/);
   assert.match(styles, /\.process-attachment-security-rule/);
   assert.match(provider, /applyProcessAttachmentSecurityChanges\(document, panel, message\.elementId, message\.configuration\)/);
@@ -956,4 +959,15 @@ test('aba Associado lê e mostra controllers preservados sem descartá-los', () 
   const styles = fs.readFileSync(path.join(__dirname, '..', '..', 'media', 'bpmn', 'editor.css'), 'utf8');
   assert.match(styles, /\.gateway-association-preserved\s*\{[^}]*grid-column:\s*1\s*\/\s*3/);
   assert.doesNotMatch(source, /querySelectorAll\('\.gateway-association-row'\)\]\.map\(\(association\) => \(\{\s*kind: association\.querySelector/);
+});
+
+test('rodape Aplicar aplica a ultima secao editada, cujo botao proprio fica fora da tela', () => {
+  const source = fs.readFileSync(path.join(__dirname, '..', '..', 'media', 'bpmn', 'editor.js'), 'utf8');
+  const updateDirtyState = source.slice(source.indexOf('function updateDirtyState('), source.indexOf('function submitProperties('));
+  const submitProperties = source.slice(source.indexOf('function submitProperties('), source.indexOf('function readForm('));
+  assert.match(updateDirtyState, /rememberEditedSection\(event\.target\)/);
+  assert.match(updateDirtyState, /applyButton\.disabled = !dirty && !pendingSection/);
+  assert.match(submitProperties, /pendingSectionApply\(\)\?\.click\(\)/);
+  assert.match(source, /function sectionApplyButtonFor\(target\)/);
+  assert.match(source, /apply\?\.isConnected && !apply\.disabled/);
 });
