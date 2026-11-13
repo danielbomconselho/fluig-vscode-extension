@@ -10,10 +10,17 @@ export class UtilsService {
     /**
      * Retorna o PATH do workspace
      */
-    public static getWorkspaceUri(): vscode.Uri {
+    public static getWorkspaceUri(resourceUri?: vscode.Uri): vscode.Uri {
         if (!vscode.workspace.workspaceFolders) {
             throw new Error("É necessário estar em Workspace / Diretório.");
         }
+        if (resourceUri) {
+            const workspaceFolder = vscode.workspace.getWorkspaceFolder(resourceUri);
+            if (workspaceFolder) {
+                return workspaceFolder.uri;
+            }
+        }
+
         return vscode.workspace.workspaceFolders[0].uri;
     }
 

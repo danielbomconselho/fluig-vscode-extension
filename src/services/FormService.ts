@@ -297,7 +297,7 @@ export class FormService {
             return;
         }
 
-        const formFolder = Uri.joinPath(UtilsService.getWorkspaceUri(), 'forms', formFolderName).fsPath;
+        const formFolder = Uri.joinPath(UtilsService.getWorkspaceUri(fileUri), 'forms', formFolderName).fsPath;
         const isEvent = /[/\\]events$/;
 
         for (let attachmentPath of glob.sync(`${formFolder}/**/*.*`, {
